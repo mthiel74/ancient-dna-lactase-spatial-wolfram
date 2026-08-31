@@ -137,3 +137,116 @@ VerificationTest[
   True,
   TestID -> "ordinary-kriging-predictor-bounded"
 ]
+
+VerificationTest[
+  Module[{v = LactasePersistenceSpatial`Private`PriorVectorSample[]},
+    LactasePersistenceSpatial`Private`PriorInSupportQ[v]
+  ],
+  True,
+  TestID -> "prior-sample-in-support"
+]
+
+VerificationTest[
+  Module[{params},
+    params = LactasePersistenceSpatial`Private`ParamsFromVector[
+      LactasePersistenceSpatial`Private`PriorVectorSample[]];
+    0 < params["InitialFrequency"] < 1 && KeyExistsQ[params, "Migration"] &&
+      ! KeyExistsQ[params, "Log10InitialFrequency"]
+  ],
+  True,
+  TestID -> "params-from-vector"
+]
+
+VerificationTest[
+  Round[LactasePersistenceSpatial`WilsonInterval[5, 10], 0.001],
+  {0.237, 0.763},
+  TestID -> "wilson-interval"
+]
+
+VerificationTest[
+  LactasePersistenceSpatial`Private`WeightedQuantile[{1., 2., 3., 4.}, {1., 1., 1., 1.}, 0.5],
+  2.,
+  TestID -> "weighted-quantile-median"
+]
+
+VerificationTest[
+  Module[{obj, ses},
+    obj[a_?NumericQ, b_?NumericQ] := -(a^2 + 2 b^2);
+    ses = LactasePersistenceSpatial`Private`LogisticFitStandardErrors[obj, 0., 0.];
+    Round[ses, 0.001]
+  ],
+  {0.707, 0.5},
+  TestID -> "logistic-standard-errors"
+]
+
+VerificationTest[
+  Module[{index, stats},
+    index = {
+      <|"CellIndex" -> 1, "TimeBP" -> 3000., "Called" -> 10, "Derived" -> 6,
+        "Latitude" -> 55., "Longitude" -> 0.|>,
+      <|"CellIndex" -> 2, "TimeBP" -> 3200., "Called" -> 10, "Derived" -> 1,
+        "Latitude" -> 40., "Longitude" -> 20.|>
+    };
+    stats = LactasePersistenceSpatial`Private`ObservedGradientStatistics[index];
+    {Round[stats["NorthSouth"], 0.01], stats["NorthSouthWeight"]}
+  ],
+  {0.5, 10},
+  TestID -> "gradient-statistics"
+]
+
+VerificationTest[
+  Module[{g0, gShift},
+    g0 = LactasePersistenceSpatial`BuildEuropeGrid[4, 0];
+    gShift = LactasePersistenceSpatial`BuildEuropeGrid[4, -400];
+    g0[[1, "DairyingOnsetBP"]] - gShift[[1, "DairyingOnsetBP"]]
+  ],
+  400,
+  TestID -> "grid-onset-shift"
+]
+
+VerificationTest[
+  Module[{grid, samples, obsData, traj, d},
+    grid = LactasePersistenceSpatial`BuildEuropeGrid[];
+    samples = {
+      <|"HasCall" -> True, "Latitude" -> 50., "Longitude" -> 8., "MeanDateBP" -> 4200.,
+        "CalledAlleles" -> 2, "DerivedAlleles" -> 1, "Region" -> "Rhine-Danube"|>,
+      <|"HasCall" -> True, "Latitude" -> 40., "Longitude" -> 15., "MeanDateBP" -> 6800.,
+        "CalledAlleles" -> 2, "DerivedAlleles" -> 0, "Region" -> "Mediterranean"|>
+    };
+    obsData = LactasePersistenceSpatial`ExtendedObservedData[samples, grid];
+    traj = LactasePersistenceSpatial`SimulateSpatialTrajectory[
+      <|"InitialFrequency" -> 0.003, "SelectionBase" -> 0.002,
+        "SelectionDairying" -> 0.02, "Migration" -> 0.003|>, grid];
+    d = LactasePersistenceSpatial`ExtendedDistance[obsData, traj, grid];
+    NumericQ[d] && d >= 0
+  ],
+  True,
+  TestID -> "extended-distance-numeric"
+]
+
+VerificationTest[
+  Module[{grid, samples, smc},
+    grid = LactasePersistenceSpatial`BuildEuropeGrid[8];
+    samples = Flatten@Table[
+      <|"HasCall" -> True, "Latitude" -> lat, "Longitude" -> lon, "MeanDateBP" -> bp,
+        "CalledAlleles" -> 4, "DerivedAlleles" -> If[bp < 4000, 1, 0],
+        "Region" -> LactasePersistenceSpatial`AssignRegion["", lat, lon]|>,
+      {lat, {42., 50., 56.}}, {lon, {0., 12.}}, {bp, {2600., 5400., 7400.}}
+    ];
+    smc = LactasePersistenceSpatial`RunSMCABC[samples, grid,
+      "Particles" -> 12, "Generations" -> 2, "Seed" -> 7];
+    Length[smc["Weights"]] == 12 && Abs[Total[smc["Weights"]] - 1.] < 10^-8 &&
+      Length[smc["EpsilonHistory"]] >= 1 && smc["TotalSimulations"] >= 12
+  ],
+  True,
+  TestID -> "smc-abc-smoke"
+]
+
+VerificationTest[
+  Module[{smc},
+    smc = <|"Weights" -> {0.5, 0.5}, "Particles" -> {<|"A" -> 1|>, <|"A" -> 2|>}|>;
+    Length[LactasePersistenceSpatial`ResamplePosterior[smc, 5]]
+  ],
+  5,
+  TestID -> "resample-posterior-count"
+]

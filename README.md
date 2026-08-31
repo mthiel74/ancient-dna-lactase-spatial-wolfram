@@ -12,8 +12,8 @@ This repository now contains a runnable Wolfram Language baseline for the full w
 - normalize sample age, location, region, and genotype calls
 - fit regional published-style logistic trajectories
 - run a coarse Europe grid diffusion/selection spatial model
-- fit the spatial model with rejection ABC
-- generate posterior predictive checks, held-out-region validation, kriged geographic maps, GIF animation, and MP4 video
+- fit the spatial model with SMC-ABC: adaptive tolerance schedule, Gaussian perturbation kernels, importance weights, and ESS tracking, using regional time-binned frequencies plus spatial-gradient summary statistics
+- generate posterior predictive checks, held-out-region and held-out-time-slice validation, prior and dairying-onset sensitivity scenarios, kriged geographic maps, GIF animation, and MP4 video
 - copy every generated animation/video version to Marco's iCloud Codex folder with timestamped filenames
 
 The automated data source is the public GLAD LP Ancient Genotypes 2022 workbook used for the Evershed et al. 2022 lactase-persistence analysis. The original request named Allentoft et al. 2022; this implementation targets the public lactase-persistence genotype source that exposes the required `rs4988235` calls, ages, and coordinates.
@@ -23,12 +23,12 @@ The automated data source is the public GLAD LP Ancient Genotypes 2022 workbook 
 Run from the repository root:
 
 ```bash
-/usr/local/bin/wolframscript -file scripts/retrieve_data.wls
-/usr/local/bin/wolframscript -file scripts/run_pipeline.wls --simulations 300 --retain 50 --cv-simulations 100
-/usr/local/bin/wolframscript -file scripts/run_tests.wls
+wolframscript -file scripts/retrieve_data.wls
+wolframscript -file scripts/run_pipeline.wls --particles 400 --generations 5 --cv-particles 150 --cv-generations 4
+wolframscript -file scripts/run_tests.wls
 ```
 
-For a faster smoke run, lower `--simulations`, `--retain`, and `--cv-simulations`.
+For a faster smoke run, lower `--particles`, `--generations`, and `--cv-particles`; pass `--sensitivity 0` to skip the sensitivity scenarios.
 
 ## Continuous Integration Note
 
@@ -39,8 +39,8 @@ GitHub Actions is configured for non-interactive Wolfram tests. The workflow req
 The pipeline writes:
 
 - raw immutable workbook and manifest under `data/raw/`
-- processed sample tables, regional bins, posterior draws, posterior predictive checks, and cross-validation results under `data/processed/`
-- regional reproduction, ABC posterior, posterior predictive, kriged spatial mean, kriged spatial uncertainty, GIF, and MP4 artifacts under `figures/generated/`
+- processed sample tables, regional bins, weighted SMC particles, resampled posterior draws, SMC diagnostics (tolerance, acceptance, ESS per generation), posterior parameter quantiles, posterior predictive checks, held-out-region and time-slice validation, and sensitivity quantiles under `data/processed/`
+- regional reproduction (with Wilson intervals), parameter posteriors with prior overlays, posterior predictive, sensitivity intervals, kriged spatial mean, kriged spatial uncertainty, GIF, and MP4 artifacts under `figures/generated/`
 - run notes under `docs/run-summary.md`
 
 Spatial maps are rendered as geographic objects with `GeoGraphics`, `GeoPosition`, and `GeoBackground -> "CountryBorders"`. The inferred model remains the coarse adjacency grid; ordinary kriging is used only as the display layer to make the geographic surface readable without claiming finer inferential resolution.

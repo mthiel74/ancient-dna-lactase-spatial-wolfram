@@ -32,6 +32,19 @@ OrdinaryKrigingPredictor::usage = "OrdinaryKrigingPredictor[coords, values] retu
 ICloudCodexDirectory::usage = "ICloudCodexDirectory[] returns Marco's iCloud Codex drop-zone directory.";
 WriteRunSummary::usage = "WriteRunSummary[root, outputs] writes a Markdown run summary.";
 
+RunSMCABC::usage = "RunSMCABC[samples, grid] runs sequential Monte Carlo ABC with adaptive tolerances, Gaussian perturbation kernels, importance weights, and spatial-gradient summary statistics.";
+ResamplePosterior::usage = "ResamplePosterior[smc, n] draws n equally weighted posterior parameter sets from a weighted SMC result.";
+PosteriorParameterQuantiles::usage = "PosteriorParameterQuantiles[smc] returns weighted posterior quantiles for every model parameter.";
+ExportSMCOutputs::usage = "ExportSMCOutputs[root, samples, grid, smc, draws] writes SMC posterior tables, diagnostics, and figures.";
+RunSMCCrossValidation::usage = "RunSMCCrossValidation[samples, grid] reruns SMC-ABC with each analysis region held out and scores held-out predictions.";
+RunTimeSliceValidation::usage = "RunTimeSliceValidation[samples, grid] trains on older samples only and predicts the held-out most recent time bins.";
+RunSensitivityAnalysis::usage = "RunSensitivityAnalysis[samples] reruns SMC-ABC under alternative priors and dairying-onset shifts.";
+ExportSensitivityOutputs::usage = "ExportSensitivityOutputs[root, rows] writes the sensitivity quantile table and figure.";
+WilsonInterval::usage = "WilsonInterval[derived, called] returns the 95% Wilson score interval for a binomial proportion.";
+ExtendedObservedData::usage = "ExtendedObservedData[samples, grid] builds binned and spatial-gradient summary data for ABC distances.";
+ExtendedDistance::usage = "ExtendedDistance[obsData, trajectory, grid] evaluates the weighted summary distance including spatial-gradient terms.";
+BuildObservationIndex::usage = "BuildObservationIndex[samples, grid] links called samples to grid cells and times for like-for-like summaries.";
+
 Begin["`Private`"];
 
 $GLADAncientGenotypesURL =
@@ -384,7 +397,7 @@ LogisticProbability[alpha_?NumericQ, beta_?NumericQ, bp_?NumericQ] :=
   BoundedProbability[1/(1 + Exp[-(alpha + beta ((10000 - bp)/1000.0))])];
 
 FitRegionLogistic[samples_List, region_String] := Module[
-  {data, objective, sol, alpha, beta, ll},
+  {data, objective, sol, alpha, beta, ll, ses, atBound},
   data = Select[samples, #["Region"] == region && TrueQ[#["HasCall"]] &&
       NumericValueQ[#["MeanDateBP"]] && #["CalledAlleles"] > 0 &];
   If[Length[data] < 4 || Total[data[[All, "CalledAlleles"]]] < 8,
@@ -396,7 +409,7 @@ FitRegionLogistic[samples_List, region_String] := Module[
     ] & /@ data
   ];
   sol = Quiet@Check[
-    NMaximize[{objective[a, b], -12 <= a <= 2 && -2 <= b <= 6}, {a, b},
+    NMaximize[{objective[a, b], -24 <= a <= 2 && -2 <= b <= 8}, {a, b},
       Method -> {"NelderMead", "RandomSeed" -> 123}],
     $Failed
   ];
@@ -405,6 +418,12 @@ FitRegionLogistic[samples_List, region_String] := Module[
     ll = sol[[1]];
     alpha = a /. sol[[2]];
     beta = b /. sol[[2]];
+    ses = Quiet@Check[
+      LogisticFitStandardErrors[objective, alpha, beta],
+      {Missing["NotAvailable"], Missing["NotAvailable"]}
+    ];
+    atBound = Abs[alpha - (-24)] < 0.01 || Abs[alpha - 2] < 0.01 ||
+      Abs[beta - (-2)] < 0.01 || Abs[beta - 8] < 0.01;
     <|
       "Region" -> region,
       "Status" -> "OK",
@@ -415,6 +434,9 @@ FitRegionLogistic[samples_List, region_String] := Module[
       "BetaPerKyrTowardPresent" -> N[beta],
       "SelectionPerGenerationApprox" -> N[beta*28/1000],
       "LogLikelihood" -> N[ll],
+      "AlphaSE" -> ses[[1]],
+      "BetaSE" -> ses[[2]],
+      "AtParameterBound" -> atBound,
       "FrequencyAt8000BP" -> LogisticProbability[alpha, beta, 8000],
       "FrequencyAt3000BP" -> LogisticProbability[alpha, beta, 3000],
       "FrequencyAtPresent" -> LogisticProbability[alpha, beta, 0]
@@ -435,31 +457,45 @@ ExportRegionalFitOutputs[root_String, samples_List, fits_List] := Module[
   fitAssoc = AssociationThread[fits[[All, "Region"]], fits];
   regions = $AnalysisRegions;
   plots = Table[
-    Module[{points, fit, curve},
-      points = ({#TimeBinMidBP, #Frequency} & /@ Select[binned, #Region == region &]);
+    Module[{sub, fit, curve, intervals, points, color},
+      sub = Select[binned, #Region == region &];
+      color = Lookup[$RegionColors, region, Black];
+      intervals = Table[
+        Module[{ci = WilsonInterval[b["DerivedAlleles"], b["CalledAlleles"]]},
+          {Directive[color, Opacity[0.55], AbsoluteThickness[1.4]],
+           Line[{{b["TimeBinMidBP"], ci[[1]]}, {b["TimeBinMidBP"], ci[[2]]}}]}
+        ],
+        {b, sub}
+      ];
+      points = Table[
+        {Directive[color, Opacity[0.95]],
+         PointSize[0.010 + 0.012 Sqrt[b["CalledAlleles"]/250.]],
+         Point[{b["TimeBinMidBP"], b["Frequency"]}]},
+        {b, sub}
+      ];
       fit = Lookup[fitAssoc, region, <|"Status" -> "Missing"|>];
       curve = If[Lookup[fit, "Status", ""] == "OK",
         Plot[
           LogisticProbability[fit["Alpha"], fit["BetaPerKyrTowardPresent"], bp],
           {bp, 0, 10000},
-          PlotStyle -> {Blue, Thick},
+          PlotStyle -> Directive[GrayLevel[0.25], AbsoluteThickness[1.8]],
           PlotRange -> {0, 1}
         ],
         Graphics[{}]
       ];
       Show[
-        ListPlot[
-          points,
-          PlotStyle -> {Black, PointSize[0.018]},
-          PlotRange -> {{0, 10000}, {0, 1}},
-          Frame -> True,
-          Axes -> False,
+        Graphics[
+          Join[intervals, points],
+          Frame -> True, Axes -> False,
+          AspectRatio -> 1/GoldenRatio,
+          PlotRange -> {{0, 10000}, {-0.03, 1}},
           FrameLabel -> {"years BP", "LP-derived allele frequency"},
-          PlotLabel -> region,
-          ImageSize -> 430
+          PlotLabel -> Style[
+            region <> If[TrueQ[Lookup[fit, "AtParameterBound", False]], " (fit at bound)", ""], 12],
+          LabelStyle -> Directive[Black, 10.5],
+          ImageSize -> 440
         ],
-        curve,
-        GridLines -> Automatic
+        curve
       ]
     ],
     {region, regions}
@@ -468,7 +504,7 @@ ExportRegionalFitOutputs[root_String, samples_List, fits_List] := Module[
   <|"RegionalFitFile" -> fitFile, "RegionalFigure" -> figFile|>
 ];
 
-BuildEuropeGrid[step_: 4] := Module[{cells, id = 0},
+BuildEuropeGrid[step_: 4, onsetShiftYears_: 0] := Module[{cells, id = 0},
   cells = Flatten[
     Table[
       Module[{region = AssignRegion["", lat, lon]},
@@ -479,7 +515,7 @@ BuildEuropeGrid[step_: 4] := Module[{cells, id = 0},
             "Latitude" -> N[lat],
             "Longitude" -> N[lon],
             "Region" -> region,
-            "DairyingOnsetBP" -> DairyingOnsetBP[region],
+            "DairyingOnsetBP" -> DairyingOnsetBP[region] + onsetShiftYears,
             "StepDegrees" -> step
           |>,
           Nothing
@@ -593,18 +629,39 @@ SummaryDistance[observed_List, predicted_List] := Module[{weights, diffs},
   Sqrt[Total[weights diffs^2]/Total[weights]]
 ];
 
-SamplePrior[] := <|
-  "InitialFrequency" -> 10^RandomReal[{-4.2, -1.5}],
-  "InitialLatitudeGradient" -> RandomReal[{-0.008, 0.012}],
-  "InitialLongitudeGradient" -> RandomReal[{-0.008, 0.008}],
-  "SelectionBase" -> RandomReal[{0.0, 0.012}],
-  "SelectionDairying" -> RandomReal[{0.0, 0.04}],
-  "Migration" -> RandomReal[{0.0, 0.015}],
-  "SelectionMultiplierBritishIsles" -> RandomReal[{0.8, 2.2}],
-  "SelectionMultiplierRhineDanube" -> RandomReal[{0.6, 1.8}],
-  "SelectionMultiplierMediterranean" -> RandomReal[{0.4, 1.4}],
-  "SelectionMultiplierBaltic" -> RandomReal[{0.8, 2.4}]
+$PriorSpec = <|
+  "Log10InitialFrequency" -> {-4.2, -1.5},
+  "InitialLatitudeGradient" -> {-0.008, 0.012},
+  "InitialLongitudeGradient" -> {-0.008, 0.008},
+  "SelectionBase" -> {0.0, 0.015},
+  "SelectionDairying" -> {0.0, 0.06},
+  "Migration" -> {0.0, 0.015},
+  "SelectionMultiplierBritishIsles" -> {0.8, 2.2},
+  "SelectionMultiplierRhineDanube" -> {0.6, 1.8},
+  "SelectionMultiplierMediterranean" -> {0.4, 1.4},
+  "SelectionMultiplierBaltic" -> {0.8, 2.4}
 |>;
+
+PriorVectorSample[spec_: Automatic] := Module[{s},
+  s = If[spec === Automatic, $PriorSpec, spec];
+  RandomReal /@ Values[s]
+];
+
+PriorInSupportQ[vector_List, spec_: Automatic] := Module[{s},
+  s = If[spec === Automatic, $PriorSpec, spec];
+  And @@ MapThread[#2[[1]] <= #1 <= #2[[2]] &, {vector, Values[s]}]
+];
+
+ParamsFromVector[vector_List, spec_: Automatic] := Module[{s, assoc},
+  s = If[spec === Automatic, $PriorSpec, spec];
+  assoc = AssociationThread[Keys[s], vector];
+  Join[
+    KeyDrop[assoc, "Log10InitialFrequency"],
+    <|"InitialFrequency" -> 10^assoc["Log10InitialFrequency"]|>
+  ]
+];
+
+SamplePrior[] := ParamsFromVector[PriorVectorSample[]];
 
 RunABCFromSummaries[observed_List, grid_List, simulationCount_Integer, retainCount_Integer, seed_Integer] := Module[
   {sims},
@@ -822,11 +879,8 @@ KrigedSurfaceValues[support_Association, values_List] :=
   Clip[support["Weights"].N[values], {0, 1}];
 
 GeoTile[{lat_, lon_}, value_, halfStep_, colorFunction_, opacity_, valueRange_] := {
+  GeoStyling[Opacity[opacity, colorFunction[Clip[Rescale[value, valueRange], {0, 1}]^0.55]]],
   EdgeForm[None],
-  FaceForm[Directive[
-    colorFunction[Clip[Rescale[value, valueRange], {0, 1}]],
-    Opacity[opacity]
-  ]],
   GeoPolygon[{
     {lat - halfStep, lon - halfStep},
     {lat - halfStep, lon + halfStep},
@@ -862,7 +916,7 @@ GeoPointLayer[samples_List] := If[samples === {},
 SpatialMap[grid_List, support_Association, values_List, samples_List, label_String, colorFunction_, opacity_: 0.58,
   valueRange_: {0, 1}, legendLabel_: "frequency"] := Module[
   {legendColorFunction},
-  legendColorFunction = (colorFunction[Clip[Rescale[#, valueRange], {0, 1}]] &);
+  legendColorFunction = (colorFunction[Clip[Rescale[#, valueRange], {0, 1}]^0.55] &);
   Framed[
     Legended[
       GeoGraphics[
@@ -917,12 +971,16 @@ ExportSpatialVisualizations[root_String, samples_List, grid_List, posterior_List
    iCloudGIFFile, iCloudMP4File, frames, meanValues, uncertaintyValues, meanCF,
    uncertaintyCF, sampleWindow, krigingSupport},
   figDir = FileNameJoin[{root, "figures", "generated"}];
-  times = Range[8000, 0, -1000];
+  times = Range[8000, 0, -500];
   stats = PosteriorCellStats[posterior, grid, times];
   krigingSupport = KrigingSurfaceSupport[grid, 1.5];
   meanCF = (Blend[
-      {RGBColor[0.05, 0.12, 0.70], RGBColor[0.0, 0.78, 0.92],
-       RGBColor[0.99, 0.83, 0.18], RGBColor[0.82, 0.12, 0.09]},
+      {RGBColor[0.267, 0.005, 0.329], RGBColor[0.283, 0.141, 0.458],
+       RGBColor[0.254, 0.265, 0.530], RGBColor[0.207, 0.372, 0.553],
+       RGBColor[0.164, 0.471, 0.558], RGBColor[0.128, 0.567, 0.551],
+       RGBColor[0.135, 0.659, 0.518], RGBColor[0.267, 0.749, 0.441],
+       RGBColor[0.478, 0.821, 0.318], RGBColor[0.741, 0.873, 0.150],
+       RGBColor[0.993, 0.906, 0.144]},
       #
     ] &);
   uncertaintyCF = (Blend[
@@ -938,13 +996,13 @@ ExportSpatialVisualizations[root_String, samples_List, grid_List, posterior_List
   Export[
     meanMapFile,
     SpatialMap[grid, krigingSupport, meanValues, sampleWindow,
-      "Kriged posterior mean LP frequency, 3000 BP", meanCF, 0.68, {0, 0.30}, "mean frequency"],
+      "Kriged posterior mean LP frequency, 3000 BP", meanCF, 0.65, {0, 0.5}, "mean frequency"],
     ImageResolution -> 160
   ];
   Export[
     uncertaintyMapFile,
     SpatialMap[grid, krigingSupport, uncertaintyValues, sampleWindow,
-      "Kriged 95% interval width, 3000 BP", uncertaintyCF, 0.58, {0, 0.8}, "95% interval width"],
+      "Kriged 95% interval width, 3000 BP", uncertaintyCF, 0.65, {0, 1.0}, "95% interval width"],
     ImageResolution -> 160
   ];
   frames = Table[
@@ -953,9 +1011,9 @@ ExportSpatialVisualizations[root_String, samples_List, grid_List, posterior_List
         GraphicsGrid[
           {{
             SpatialMap[grid, krigingSupport, mean, s, "Kriged mean frequency, " <> ToString[t] <> " BP",
-              meanCF, 0.68, {0, 0.30}, "mean frequency"],
+              meanCF, 0.65, {0, 0.5}, "mean frequency"],
             SpatialMap[grid, krigingSupport, width, s, "Kriged uncertainty width, " <> ToString[t] <> " BP",
-              uncertaintyCF, 0.58, {0, 0.8}, "95% width"]
+              uncertaintyCF, 0.65, {0, 1.0}, "95% width"]
           }},
           Spacings -> {0.2, 0.1},
           ImageSize -> 1500
@@ -968,7 +1026,7 @@ ExportSpatialVisualizations[root_String, samples_List, grid_List, posterior_List
     {t, times}
   ];
   gifFile = FileNameJoin[{figDir, "lactase_persistence_spatial_posterior.gif"}];
-  Export[gifFile, frames, "DisplayDurations" -> 0.9, AnimationRepetitions -> Infinity];
+  Export[gifFile, frames, "DisplayDurations" -> 0.7, AnimationRepetitions -> Infinity];
   mp4File = ExportMP4FromGIF[
     gifFile,
     FileNameJoin[{figDir, "lactase_persistence_spatial_posterior.mp4"}],
@@ -989,7 +1047,8 @@ ExportSpatialVisualizations[root_String, samples_List, grid_List, posterior_List
   |>
 ];
 
-WriteRunSummary[root_String, outputs_Association] := Module[{file, lines, path, rootClean, rootPrefix},
+WriteRunSummary[root_String, outputs_Association] := Module[
+  {file, lines, path, rootClean, rootPrefix, entry},
   file = FileNameJoin[{root, "docs", "run-summary.md"}];
   rootClean = If[StringEndsQ[root, $PathnameSeparator] && StringLength[root] > 1, StringDrop[root, -1], root];
   rootPrefix = rootClean <> $PathnameSeparator;
@@ -999,34 +1058,620 @@ WriteRunSummary[root_String, outputs_Association] := Module[{file, lines, path, 
       ToString[value, InputForm]
     ]
   ];
-  lines = {
-    "# Run Summary",
-    "",
-    "Generated: " <> DateString[Now, "ISODateTime"],
-    "",
-    "This is an executable baseline pipeline for the ancient lactase-persistence spatial model. It uses the public GLAD ancient genotype workbook derived from AADR v44.3 and fits a coarse regional and spatial model in Wolfram Language.",
-    "",
-    "## Key Outputs",
-    "",
-    "- Processed samples: `" <> path["CalledSamplesFile"] <> "`",
-    "- Regional binned frequencies: `" <> path["BinnedFrequenciesFile"] <> "`",
-    "- Regional logistic fits: `" <> path["RegionalFitFile"] <> "`",
-    "- Regional reproduction figure: `" <> path["RegionalFigure"] <> "`",
-    "- ABC posterior: `" <> path["PosteriorFile"] <> "`",
-    "- Posterior predictive checks: `" <> path["PosteriorPredictiveFile"] <> "`",
-    "- Spatial mean map: `" <> path["MeanMap"] <> "`",
-    "- Spatial uncertainty map: `" <> path["UncertaintyMap"] <> "`",
-    "- Spatial GIF animation: `" <> path["Animation"] <> "`",
-    "- Spatial MP4 video: `" <> path["MP4"] <> "`",
-    "- iCloud GIF copy: `" <> path["ICloudAnimation"] <> "`",
-    "- iCloud MP4 copy: `" <> path["ICloudMP4"] <> "`",
-    "",
-    "## Scientific Status",
-    "",
-    "The regional logistic reproduction is a qualitative reproduction layer, not a claim of exact parameter identity with Evershed et al. 2022. The spatial model is deliberately coarse and is intended as a calibrated baseline for further refinement. The exported maps use ordinary kriging only as a geographic display layer over the coarse posterior grid."
-  };
+  entry[label_String, key_String] :=
+    If[KeyExistsQ[outputs, key], {"- " <> label <> ": `" <> path[key] <> "`"}, {}];
+  lines = Join[
+    {"# Run Summary", "",
+     "Generated: " <> DateString[Now, "ISODateTime"], "",
+     "Pipeline: GLAD ancient rs4988235 genotypes (derived from AADR v44.3), regional binomial logistic reproduction, coarse spatial diffusion-selection model, SMC-ABC inference with spatial-gradient summary statistics, posterior predictive checks, held-out validation, and prior sensitivity analysis.", "",
+     "## Key Outputs", ""},
+    entry["Processed samples", "CalledSamplesFile"],
+    entry["Regional binned frequencies", "BinnedFrequenciesFile"],
+    entry["Regional logistic fits", "RegionalFitFile"],
+    entry["Regional reproduction figure", "RegionalFigure"],
+    entry["SMC particles with weights", "ParticlesFile"],
+    entry["Resampled posterior draws", "PosteriorFile"],
+    entry["SMC diagnostics", "DiagnosticsFile"],
+    entry["Posterior parameter quantiles", "QuantilesFile"],
+    entry["Posterior predictive checks", "PosteriorPredictiveFile"],
+    entry["Parameter posterior figure", "ParameterFigure"],
+    entry["Posterior predictive figure", "PosteriorPredictiveFigure"],
+    entry["Held-out-region cross-validation", "CrossValidationFile"],
+    entry["Time-slice validation", "TimeSliceFile"],
+    entry["Sensitivity quantiles", "SensitivityFile"],
+    entry["Sensitivity figure", "SensitivityFigure"],
+    entry["Spatial mean map", "MeanMap"],
+    entry["Spatial uncertainty map", "UncertaintyMap"],
+    entry["Spatial GIF animation", "Animation"],
+    entry["Spatial MP4 video", "MP4"],
+    entry["iCloud GIF copy", "ICloudAnimation"],
+    entry["iCloud MP4 copy", "ICloudMP4"],
+    {"",
+     "## Inference Notes", "",
+     Lookup[outputs, "InferenceNote", "SMC-ABC settings recorded in smc_diagnostics.csv."], "",
+     "## Scientific Status", "",
+     "The regional logistic layer is a qualitative reproduction of the published four-region framing, not a claim of exact parameter identity with Evershed et al. 2022. The spatial model is deliberately coarse; ordinary kriging is a display layer only. Posterior uncertainty, held-out validation, and prior sensitivity are reported alongside every point summary."}
+  ];
   Export[file, StringRiffle[lines, "\n"], "Text"];
   file
+];
+
+
+(* ------------------------------------------------------------------ *)
+(* Statistical upgrade layer: Wilson intervals, logistic-fit standard *)
+(* errors, spatial-gradient summary statistics, and shared styling.   *)
+(* ------------------------------------------------------------------ *)
+
+$RegionColors = <|
+  "British Isles" -> RGBColor[0.20, 0.47, 0.71],
+  "Rhine-Danube" -> RGBColor[0.85, 0.45, 0.11],
+  "Mediterranean" -> RGBColor[0.17, 0.63, 0.37],
+  "Baltic" -> RGBColor[0.62, 0.35, 0.71],
+  "Other Europe" -> GrayLevel[0.45]
+|>;
+
+$PosteriorColor = RGBColor[0.20, 0.47, 0.71];
+$PriorColor = RGBColor[0.85, 0.45, 0.11];
+
+WilsonInterval[derived_?NumericQ, called_?NumericQ, z_: 1.959963984540054] := Module[
+  {p, denom, center, half},
+  If[called <= 0, Return[{0., 1.}]];
+  p = N[derived/called];
+  denom = 1 + z^2/called;
+  center = (p + z^2/(2 called))/denom;
+  half = (z Sqrt[p (1 - p)/called + z^2/(4 called^2)])/denom;
+  {Clip[center - half, {0, 1}], Clip[center + half, {0, 1}]}
+];
+
+LogisticFitStandardErrors[objective_, alpha_?NumericQ, beta_?NumericQ, h_: 0.005] := Module[
+  {faa, fbb, fab, hessian, cov},
+  faa = (objective[alpha + h, beta] - 2 objective[alpha, beta] + objective[alpha - h, beta])/h^2;
+  fbb = (objective[alpha, beta + h] - 2 objective[alpha, beta] + objective[alpha, beta - h])/h^2;
+  fab = (objective[alpha + h, beta + h] - objective[alpha + h, beta - h] -
+      objective[alpha - h, beta + h] + objective[alpha - h, beta - h])/(4 h^2);
+  hessian = {{faa, fab}, {fab, fbb}};
+  cov = Quiet@Check[Inverse[-hessian], $Failed];
+  If[cov === $Failed || AnyTrue[Diagonal[cov], # <= 0 &],
+    {Missing["NotAvailable"], Missing["NotAvailable"]},
+    Sqrt[Diagonal[cov]]
+  ]
+];
+
+WeightedQuantile[values_List, weights_List, q_?NumericQ] := Module[
+  {order, v, w, cum, total, idx},
+  order = Ordering[values];
+  v = values[[order]]; w = weights[[order]];
+  total = Total[w];
+  If[total <= 0, Return[Missing["NoWeight"]]];
+  cum = Accumulate[w]/total;
+  idx = LengthWhile[cum, # < q &] + 1;
+  v[[Min[idx, Length[v]]]]
+];
+
+WeightedComponentVariance[vectors_List, weights_List] := Module[
+  {w = weights/Total[weights], means},
+  means = w . vectors;
+  w . ((# - means)^2 & /@ vectors)
+];
+
+(* --- observation index and spatial-gradient summary statistics --- *)
+
+BuildObservationIndex[samples_List, grid_List] := Module[{coords, nf, sel},
+  coords = ({#["Latitude"], #["Longitude"]} & /@ grid);
+  nf = Nearest[coords -> "Index"];
+  sel = Select[samples,
+    TrueQ[#["HasCall"]] && NumericValueQ[#["Latitude"]] && NumericValueQ[#["Longitude"]] &&
+      NumericValueQ[#["MeanDateBP"]] && #["MeanDateBP"] <= 12000 &&
+      MemberQ[Append[$AnalysisRegions, "Other Europe"], #["Region"]] &
+  ];
+  Map[
+    <|
+      "CellIndex" -> First[nf[{#["Latitude"], #["Longitude"]}]],
+      "TimeBP" -> N[#["MeanDateBP"]],
+      "Called" -> #["CalledAlleles"],
+      "Derived" -> #["DerivedAlleles"],
+      "Latitude" -> #["Latitude"],
+      "Longitude" -> #["Longitude"]
+    |> &,
+    sel
+  ]
+];
+
+$GradientLateWindowBP = 4000;
+
+GradientPoolPositions[index_List] := Module[{latePos},
+  latePos = Select[Range[Length[index]], index[[#, "TimeBP"]] <= $GradientLateWindowBP &];
+  <|
+    "North" -> Select[latePos, index[[#, "Latitude"]] >= 52 &],
+    "South" -> Select[latePos, index[[#, "Latitude"]] < 46 &],
+    "West" -> Select[latePos, index[[#, "Longitude"]] < 5 &],
+    "East" -> Select[latePos, index[[#, "Longitude"]] >= 15 &]
+  |>
+];
+
+PooledFrequency[index_List, positions_List] := Module[{called, derived},
+  If[positions === {}, Return[Missing["NoSamples"]]];
+  called = Total[index[[positions, "Called"]]];
+  derived = Total[index[[positions, "Derived"]]];
+  If[called <= 0, Missing["NoSamples"], N[derived/called]]
+];
+
+PooledPredictedFrequency[index_List, positions_List, ps_List] := Module[{called},
+  If[positions === {}, Return[Missing["NoSamples"]]];
+  called = index[[positions, "Called"]];
+  If[Total[called] <= 0, Missing["NoSamples"], N[Total[called ps[[positions]]]/Total[called]]]
+];
+
+ObservedGradientStatistics[index_List] := Module[{pools, fN, fS, fW, fE, wNS, wWE},
+  pools = GradientPoolPositions[index];
+  fN = PooledFrequency[index, pools["North"]];
+  fS = PooledFrequency[index, pools["South"]];
+  fW = PooledFrequency[index, pools["West"]];
+  fE = PooledFrequency[index, pools["East"]];
+  wNS = If[MissingQ[fN] || MissingQ[fS], 0,
+    Min[Total[index[[pools["North"], "Called"]]], Total[index[[pools["South"], "Called"]]]]];
+  wWE = If[MissingQ[fW] || MissingQ[fE], 0,
+    Min[Total[index[[pools["West"], "Called"]]], Total[index[[pools["East"], "Called"]]]]];
+  <|
+    "Pools" -> pools,
+    "NorthSouth" -> If[wNS > 0, fN - fS, 0.],
+    "WestEast" -> If[wWE > 0, fW - fE, 0.],
+    "NorthSouthWeight" -> wNS,
+    "WestEastWeight" -> wWE
+  |>
+];
+
+PredictedSampleProbabilities[trajectory_Association, index_List] := Module[{times, freqs},
+  times = trajectory["TimesBP"];
+  freqs = trajectory["Frequencies"];
+  Map[
+    freqs[[First@Ordering[Abs[times - #["TimeBP"]], 1], #["CellIndex"]]] &,
+    index
+  ]
+];
+
+ExtendedObservedData[samples_List, grid_List, binSize_: 1000] := Module[{binned, index, gradient},
+  binned = ObservedSummaries[samples, binSize];
+  index = BuildObservationIndex[samples, grid];
+  gradient = ObservedGradientStatistics[index];
+  <|"Binned" -> binned, "Index" -> index, "Gradient" -> gradient|>
+];
+
+ExtendedDistance[obsData_Association, trajectory_Association, grid_List] := Module[
+  {binned, predicted, binWeights, binDiffs, gradient, ps, pools, gNSpred, gWEpred,
+   gNSdiff, gWEdiff, wNS, wWE, num, den},
+  binned = obsData["Binned"];
+  predicted = PredictedSummariesFromTrajectory[trajectory, grid, binned];
+  binWeights = binned[[All, "CalledAlleles"]];
+  binDiffs = binned[[All, "Frequency"]] - predicted[[All, "PredictedFrequency"]];
+  gradient = obsData["Gradient"];
+  pools = gradient["Pools"];
+  wNS = gradient["NorthSouthWeight"];
+  wWE = gradient["WestEastWeight"];
+  ps = If[wNS > 0 || wWE > 0, PredictedSampleProbabilities[trajectory, obsData["Index"]], {}];
+  gNSdiff = If[wNS > 0,
+    gNSpred = PooledPredictedFrequency[obsData["Index"], pools["North"], ps] -
+      PooledPredictedFrequency[obsData["Index"], pools["South"], ps];
+    gradient["NorthSouth"] - gNSpred,
+    0.
+  ];
+  gWEdiff = If[wWE > 0,
+    gWEpred = PooledPredictedFrequency[obsData["Index"], pools["West"], ps] -
+      PooledPredictedFrequency[obsData["Index"], pools["East"], ps];
+    gradient["WestEast"] - gWEpred,
+    0.
+  ];
+  num = Total[binWeights binDiffs^2] + wNS gNSdiff^2 + wWE gWEdiff^2;
+  den = Total[binWeights] + wNS + wWE;
+  Sqrt[num/den]
+];
+
+(* ------------------------------------------------------------------ *)
+(* SMC-ABC with adaptive tolerances and importance weights.           *)
+(* ------------------------------------------------------------------ *)
+
+SMCDistanceForVector[vector_List, obsData_Association, grid_List, spec_] := Module[
+  {params, trajectory},
+  params = ParamsFromVector[vector, spec];
+  trajectory = SimulateSpatialTrajectory[params, grid];
+  ExtendedDistance[obsData, trajectory, grid]
+];
+
+GaussianKernelDensityRows[candidates_List, previous_List, sds_List] := Module[
+  {invTwoVar, norm},
+  invTwoVar = 1/(2 sds^2);
+  norm = 1/(Sqrt[2 Pi] sds);
+  Table[
+    Table[
+      Times @@ (norm Exp[-invTwoVar (candidates[[i]] - previous[[j]])^2]),
+      {j, Length[previous]}
+    ],
+    {i, Length[candidates]}
+  ]
+];
+
+(* SMC operates in an unbounded logit-transformed space so that Gaussian
+   perturbations never leave the prior box. If x ~ Uniform(a, b) and
+   y = logit((x - a)/(b - a)), then y follows a standard logistic
+   distribution, giving a closed-form prior density in y-space. *)
+
+ToUnboundedVector[vector_List, spec_] := MapThread[
+  Module[{u = Clip[(#1 - #2[[1]])/(#2[[2]] - #2[[1]]), {10.^-12, 1 - 10.^-12}]},
+    Log[u/(1 - u)]
+  ] &,
+  {vector, Values[spec]}
+];
+
+FromUnboundedVector[y_List, spec_] := MapThread[
+  #2[[1]] + (#2[[2]] - #2[[1]])/(1 + Exp[-#1]) &,
+  {y, Values[spec]}
+];
+
+LogisticPriorDensity[y_List] := Times @@ (Exp[-#]/(1 + Exp[-#])^2 & /@ y);
+
+Options[RunSMCABC] = {
+  "Particles" -> 400,
+  "Generations" -> 5,
+  "ToleranceQuantile" -> 0.5,
+  "Seed" -> 20260831,
+  "BinSizeYears" -> 1000,
+  "MaxSimulationsPerGeneration" -> Automatic,
+  "PriorSpec" -> Automatic,
+  "ProgressFunction" -> None
+};
+
+RunSMCABC[samples_List, grid_List, OptionsPattern[]] := Module[
+  {spec, n, gens, q, seed, obsData, maxSims, progress,
+   vectors, ys, dists, weights, eps, epsHistory = {}, accHistory = {}, essHistory = {},
+   totalSims = 0, generationShortfall = False},
+  spec = If[OptionValue["PriorSpec"] === Automatic, $PriorSpec, OptionValue["PriorSpec"]];
+  n = OptionValue["Particles"];
+  gens = OptionValue["Generations"];
+  q = OptionValue["ToleranceQuantile"];
+  seed = OptionValue["Seed"];
+  maxSims = If[OptionValue["MaxSimulationsPerGeneration"] === Automatic,
+    30 n, OptionValue["MaxSimulationsPerGeneration"]];
+  progress = OptionValue["ProgressFunction"];
+  obsData = ExtendedObservedData[samples, grid, OptionValue["BinSizeYears"]];
+  BlockRandom[
+    SeedRandom[seed];
+    vectors = Table[PriorVectorSample[spec], {n}];
+    ys = ToUnboundedVector[#, spec] & /@ vectors;
+    dists = SMCDistanceForVector[#, obsData, grid, spec] & /@ vectors;
+    totalSims += n;
+    weights = ConstantArray[1./n, n];
+    eps = Quantile[dists, q];
+    AppendTo[epsHistory, eps];
+    AppendTo[accHistory, 1.];
+    AppendTo[essHistory, N[n]];
+    If[progress =!= None, progress[1, eps, 1., N[n]]];
+    Do[
+      Module[
+        {prevYs = ys, prevWeights = weights, sds,
+         acceptedYs = {}, acceptedXs = {}, acceptedDists = {}, attempts = 0,
+         batch, batchYs, batchXs, batchDists, keepPos, kernelRows, priorDensities, newWeights},
+        sds = Sqrt[2. Clip[WeightedComponentVariance[prevYs, prevWeights], {10.^-12, Infinity}]];
+        While[Length[acceptedYs] < n && attempts < maxSims,
+          batch = Min[2 n, maxSims - attempts];
+          batchYs = Table[
+            RandomChoice[prevWeights -> prevYs] +
+              sds RandomVariate[NormalDistribution[0, 1], Length[sds]],
+            {batch}
+          ];
+          attempts += batch;
+          batchXs = FromUnboundedVector[#, spec] & /@ batchYs;
+          batchDists = SMCDistanceForVector[#, obsData, grid, spec] & /@ batchXs;
+          totalSims += batch;
+          keepPos = Select[Range[Length[batchDists]], batchDists[[#]] < eps &];
+          acceptedYs = Join[acceptedYs, batchYs[[keepPos]]];
+          acceptedXs = Join[acceptedXs, batchXs[[keepPos]]];
+          acceptedDists = Join[acceptedDists, batchDists[[keepPos]]];
+        ];
+        If[Length[acceptedYs] < n,
+          generationShortfall = True;
+          Break[]
+        ];
+        acceptedYs = acceptedYs[[;; n]];
+        acceptedXs = acceptedXs[[;; n]];
+        acceptedDists = acceptedDists[[;; n]];
+        kernelRows = GaussianKernelDensityRows[acceptedYs, prevYs, sds];
+        priorDensities = LogisticPriorDensity /@ acceptedYs;
+        newWeights = Table[
+          priorDensities[[i]]/Max[prevWeights . kernelRows[[i]], 10.^-300],
+          {i, n}
+        ];
+        newWeights = newWeights/Total[newWeights];
+        ys = acceptedYs;
+        vectors = acceptedXs;
+        dists = acceptedDists;
+        weights = newWeights;
+        eps = Quantile[dists, q];
+        AppendTo[epsHistory, eps];
+        AppendTo[accHistory, N[n/Max[attempts, 1]]];
+        AppendTo[essHistory, 1./Total[weights^2]];
+        If[progress =!= None, progress[g, eps, N[n/Max[attempts, 1]], 1./Total[weights^2]]];
+      ],
+      {g, 2, gens}
+    ];
+  ];
+  <|
+    "ParticleVectors" -> vectors,
+    "Particles" -> MapThread[Append[ParamsFromVector[#1, spec], "Distance" -> #2] &, {vectors, dists}],
+    "Weights" -> weights,
+    "ParameterKeys" -> Keys[spec],
+    "EpsilonHistory" -> epsHistory,
+    "AcceptanceHistory" -> accHistory,
+    "ESSHistory" -> essHistory,
+    "TotalSimulations" -> totalSims,
+    "GenerationShortfall" -> generationShortfall,
+    "ObservedSummaries" -> obsData["Binned"],
+    "PriorSpecUsed" -> spec
+  |>
+];
+
+ResamplePosterior[smc_Association, count_Integer: 100] := BlockRandom[
+  SeedRandom[420 + count];
+  RandomChoice[smc["Weights"] -> smc["Particles"], count]
+];
+
+$DefaultQuantileSpec = {{"Lower95", 0.025}, {"Q25", 0.25}, {"Median", 0.5}, {"Q75", 0.75}, {"Upper95", 0.975}};
+
+PosteriorParameterQuantiles[smc_Association, qs_: Automatic] := Module[
+  {spec = smc["PriorSpecUsed"], vectors = smc["ParticleVectors"], weights = smc["Weights"],
+   quantSpec, keys},
+  quantSpec = If[qs === Automatic, $DefaultQuantileSpec, qs];
+  keys = Keys[spec];
+  Table[
+    Join[
+      <|"Parameter" -> keys[[k]]|>,
+      AssociationThread[
+        quantSpec[[All, 1]],
+        WeightedQuantile[vectors[[All, k]], weights, #] & /@ quantSpec[[All, 2]]
+      ]
+    ],
+    {k, Length[keys]}
+  ]
+];
+
+(* --- SMC output export: tables, diagnostics, and figures --- *)
+
+PosteriorPriorFigure[smc_Association] := Module[
+  {spec = smc["PriorSpecUsed"], vectors = smc["ParticleVectors"], weights = smc["Weights"], panels},
+  panels = Table[
+    Module[{pos, vals, range, pad, priorDensity, hist, priorPlot},
+      pos = Position[Keys[spec], key][[1, 1]];
+      vals = vectors[[All, pos]];
+      range = spec[key];
+      pad = 0.03 (range[[2]] - range[[1]]);
+      priorDensity = 1/(range[[2]] - range[[1]]);
+      hist = Histogram[WeightedData[vals, weights], 14, "PDF",
+        ChartStyle -> Directive[$PosteriorColor, Opacity[0.65], EdgeForm[None]],
+        Frame -> True, Axes -> False,
+        PlotLabel -> Style[key, 10.5],
+        ImageSize -> 300,
+        LabelStyle -> Directive[Black, 9.5]];
+      priorPlot = Plot[priorDensity, {x, range[[1]], range[[2]]},
+        PlotStyle -> Directive[$PriorColor, Dashed, AbsoluteThickness[1.6]]];
+      Show[hist, priorPlot, PlotRange -> {{range[[1]] - pad, range[[2]] + pad}, All}]
+    ],
+    {key, Keys[spec]}
+  ];
+  Legended[
+    GraphicsGrid[Partition[panels, 2], Spacings -> {0.6, 0.7}],
+    LineLegend[
+      {Directive[$PosteriorColor, AbsoluteThickness[6]], Directive[$PriorColor, Dashed]},
+      {"weighted SMC posterior", "prior"}
+    ]
+  ]
+];
+
+PosteriorPredictiveFigure[ppc_List] := Module[{coverage},
+  coverage = N[Mean[Boole /@ ppc[[All, "Covered95"]]]];
+  Legended[
+    Graphics[
+      Join[
+        {{GrayLevel[0.6], Dashed, AbsoluteThickness[1], Line[{{0, 0}, {1, 1}}]}},
+        Table[
+          {Directive[Lookup[$RegionColors, row["Region"], Black], Opacity[0.8], AbsoluteThickness[1.6]],
+           Line[{{row["ObservedFrequency"], row["Lower95"]}, {row["ObservedFrequency"], row["Upper95"]}}],
+           Directive[Lookup[$RegionColors, row["Region"], Black], Opacity[1]],
+           PointSize[0.012], Point[{row["ObservedFrequency"], row["PosteriorMedian"]}]},
+          {row, ppc}
+        ]
+      ],
+      Frame -> True, Axes -> False,
+      PlotRange -> {{-0.02, 1.02}, {-0.02, 1.02}},
+      FrameLabel -> {"observed binned frequency", "posterior predictive"},
+      PlotLabel -> Style[
+        "Posterior predictive check, 95% intervals, empirical coverage " <>
+          ToString[NumberForm[coverage, {3, 2}]], 12],
+      LabelStyle -> Directive[Black, 11],
+      ImageSize -> 640
+    ],
+    PointLegend[Values[KeyTake[$RegionColors, $AnalysisRegions]], $AnalysisRegions]
+  ]
+];
+
+ExportSMCOutputs[root_String, samples_List, grid_List, smc_Association, posteriorDraws_List] := Module[
+  {processedDir, figDir, particlesFile, posteriorFile, diagFile, quantFile, ppcFile,
+   ppc, quantiles, paramFig, ppcFig, diag},
+  processedDir = FileNameJoin[{root, "data", "processed"}];
+  figDir = FileNameJoin[{root, "figures", "generated"}];
+  particlesFile = FileNameJoin[{processedDir, "smc_particles.csv"}];
+  posteriorFile = FileNameJoin[{processedDir, "abc_posterior.csv"}];
+  diagFile = FileNameJoin[{processedDir, "smc_diagnostics.csv"}];
+  quantFile = FileNameJoin[{processedDir, "posterior_parameter_quantiles.csv"}];
+  ppcFile = FileNameJoin[{processedDir, "posterior_predictive_regional.csv"}];
+  ExportRows[particlesFile,
+    MapThread[Append[#1, "Weight" -> #2] &, {smc["Particles"], smc["Weights"]}]];
+  ExportRows[posteriorFile, posteriorDraws];
+  diag = Table[
+    <|"Generation" -> k,
+      "Epsilon" -> smc["EpsilonHistory"][[k]],
+      "AcceptanceRate" -> smc["AcceptanceHistory"][[k]],
+      "ESS" -> If[k <= Length[smc["ESSHistory"]], smc["ESSHistory"][[k]], Missing["NotAvailable"]]|>,
+    {k, Length[smc["EpsilonHistory"]]}
+  ];
+  ExportRows[diagFile, diag];
+  quantiles = PosteriorParameterQuantiles[smc];
+  ExportRows[quantFile, quantiles];
+  ppc = PosteriorPredictiveRegional[posteriorDraws, grid, smc["ObservedSummaries"]];
+  ExportRows[ppcFile, ppc];
+  paramFig = FileNameJoin[{figDir, "abc_parameter_posteriors.png"}];
+  Export[paramFig, PosteriorPriorFigure[smc], ImageResolution -> 160];
+  ppcFig = FileNameJoin[{figDir, "posterior_predictive_regional.png"}];
+  Export[ppcFig, PosteriorPredictiveFigure[ppc], ImageResolution -> 160];
+  <|"ParticlesFile" -> particlesFile, "PosteriorFile" -> posteriorFile,
+    "DiagnosticsFile" -> diagFile, "QuantilesFile" -> quantFile,
+    "PosteriorPredictiveFile" -> ppcFile, "ParameterFigure" -> paramFig,
+    "PosteriorPredictiveFigure" -> ppcFig, "PosteriorPredictive" -> ppc|>
+];
+
+(* --- validation layers --- *)
+
+Options[RunSMCCrossValidation] = {
+  "Particles" -> 150, "Generations" -> 4, "Seed" -> 260831, "PosteriorDraws" -> 60
+};
+
+RunSMCCrossValidation[samples_List, grid_List, OptionsPattern[]] := Module[
+  {obsAll, rows},
+  obsAll = ObservedSummaries[samples];
+  rows = Table[
+    Module[{trainSamples, heldObs, smc, draws, ppc, diffs, covered},
+      trainSamples = Select[samples, #["Region"] =!= held &];
+      heldObs = Select[obsAll, #Region === held &];
+      smc = RunSMCABC[trainSamples, grid,
+        "Particles" -> OptionValue["Particles"],
+        "Generations" -> OptionValue["Generations"],
+        "Seed" -> OptionValue["Seed"] + StringLength[held]];
+      draws = ResamplePosterior[smc, OptionValue["PosteriorDraws"]];
+      ppc = PosteriorPredictiveRegional[draws, grid, heldObs];
+      diffs = ppc[[All, "ObservedFrequency"]] - ppc[[All, "PosteriorMedian"]];
+      covered = Boole /@ ppc[[All, "Covered95"]];
+      <|
+        "HeldOutRegion" -> held,
+        "HeldOutBins" -> Length[heldObs],
+        "RMSE" -> If[diffs === {}, Missing["NoHeldOutBins"], Sqrt[Mean[diffs^2]]],
+        "Coverage95" -> If[covered === {}, Missing["NoHeldOutBins"], N[Mean[covered]]],
+        "FinalEpsilon" -> Last[smc["EpsilonHistory"]],
+        "TotalSimulations" -> smc["TotalSimulations"]
+      |>
+    ],
+    {held, $AnalysisRegions}
+  ];
+  rows
+];
+
+Options[RunTimeSliceValidation] = {
+  "CutBP" -> 2500, "Particles" -> 150, "Generations" -> 4, "Seed" -> 311226, "PosteriorDraws" -> 60
+};
+
+RunTimeSliceValidation[samples_List, grid_List, OptionsPattern[]] := Module[
+  {cut, trainSamples, obsAll, heldObs, smc, draws, ppc, diffs, covered},
+  cut = OptionValue["CutBP"];
+  trainSamples = Select[samples, NumericValueQ[#["MeanDateBP"]] && #["MeanDateBP"] > cut &];
+  obsAll = ObservedSummaries[samples];
+  heldObs = Select[obsAll, #TimeBinMidBP <= cut &];
+  smc = RunSMCABC[trainSamples, grid,
+    "Particles" -> OptionValue["Particles"],
+    "Generations" -> OptionValue["Generations"],
+    "Seed" -> OptionValue["Seed"]];
+  draws = ResamplePosterior[smc, OptionValue["PosteriorDraws"]];
+  ppc = PosteriorPredictiveRegional[draws, grid, heldObs];
+  diffs = ppc[[All, "ObservedFrequency"]] - ppc[[All, "PosteriorMedian"]];
+  covered = Boole /@ ppc[[All, "Covered95"]];
+  <|
+    "CutBP" -> cut,
+    "HeldOutBins" -> Length[heldObs],
+    "TrainingSamples" -> Length[trainSamples],
+    "RMSE" -> If[diffs === {}, Missing["NoHeldOutBins"], Sqrt[Mean[diffs^2]]],
+    "Coverage95" -> If[covered === {}, Missing["NoHeldOutBins"], N[Mean[covered]]],
+    "PosteriorPredictive" -> ppc,
+    "TotalSimulations" -> smc["TotalSimulations"]
+  |>
+];
+
+(* --- prior and dairying-onset sensitivity analysis --- *)
+
+ModifiedPriorSpec[changes_Association] := Join[$PriorSpec, changes];
+
+$SensitivityScenarios = <|
+  "Baseline" -> <|"PriorChanges" -> <||>, "OnsetShiftYears" -> 0|>,
+  "NarrowSelection" -> <|
+    "PriorChanges" -> <|"SelectionBase" -> {0.0, 0.008}, "SelectionDairying" -> {0.0, 0.03}|>,
+    "OnsetShiftYears" -> 0|>,
+  "WideMigration" -> <|"PriorChanges" -> <|"Migration" -> {0.0, 0.03}|>, "OnsetShiftYears" -> 0|>,
+  "EarlierDairying" -> <|"PriorChanges" -> <||>, "OnsetShiftYears" -> -400|>,
+  "LaterDairying" -> <|"PriorChanges" -> <||>, "OnsetShiftYears" -> 400|>
+|>;
+
+Options[RunSensitivityAnalysis] = {"Particles" -> 150, "Generations" -> 4, "Seed" -> 90210};
+
+RunSensitivityAnalysis[samples_List, OptionsPattern[]] := Module[{rows},
+  rows = Flatten@Table[
+    Module[{scenario, spec, scenarioGrid, smc, quantiles},
+      scenario = $SensitivityScenarios[name];
+      spec = ModifiedPriorSpec[scenario["PriorChanges"]];
+      scenarioGrid = BuildEuropeGrid[4, scenario["OnsetShiftYears"]];
+      smc = RunSMCABC[samples, scenarioGrid,
+        "Particles" -> OptionValue["Particles"],
+        "Generations" -> OptionValue["Generations"],
+        "Seed" -> OptionValue["Seed"] + StringLength[name],
+        "PriorSpec" -> spec];
+      quantiles = PosteriorParameterQuantiles[smc,
+        {{"Lower95", 0.025}, {"Median", 0.5}, {"Upper95", 0.975}}];
+      Map[
+        Join[<|"Scenario" -> name|>, #] &,
+        Select[quantiles,
+          MemberQ[{"Log10InitialFrequency", "SelectionBase", "SelectionDairying", "Migration"},
+            #["Parameter"]] &]
+      ]
+    ],
+    {name, Keys[$SensitivityScenarios]}
+  ];
+  rows
+];
+
+SensitivityFigure[rows_List] := Module[
+  {params = {"SelectionBase", "SelectionDairying", "Migration"}, scenarios, panels},
+  scenarios = DeleteDuplicates[rows[[All, "Scenario"]]];
+  panels = Table[
+    Module[{sub, xmax, xticks},
+      sub = Select[rows, #["Parameter"] === p &];
+      xmax = Max[sub[[All, "Upper95"]]];
+      xticks = N[FindDivisions[{0, 1.05 xmax}, 4]];
+      Graphics[
+        Table[
+          Module[{row},
+            row = SelectFirst[sub, #["Scenario"] === scenarios[[k]] &, Missing["NotFound"]];
+            If[MissingQ[row], {},
+              {Directive[$PosteriorColor, AbsoluteThickness[2.2]],
+               Line[{{row["Lower95"], k}, {row["Upper95"], k}}],
+               PointSize[0.025], Point[{row["Median"], k}]}
+            ]
+          ],
+          {k, Length[scenarios]}
+        ],
+        Frame -> True, Axes -> False,
+        FrameTicks -> {{Table[{k, scenarios[[k]]}, {k, Length[scenarios]}], None}, {xticks, None}},
+        PlotLabel -> Style[p, 11],
+        PlotRange -> {{-0.02 xmax, 1.1 xmax}, {0.4, Length[scenarios] + 0.6}},
+        LabelStyle -> Directive[Black, 9.5],
+        ImageSize -> 400,
+        AspectRatio -> 0.75
+      ]
+    ],
+    {p, params}
+  ];
+  GraphicsRow[panels, Spacings -> 0.4]
+];
+
+ExportSensitivityOutputs[root_String, rows_List] := Module[{file, fig},
+  file = FileNameJoin[{root, "data", "processed", "sensitivity_posterior_quantiles.csv"}];
+  ExportRows[file, rows];
+  fig = FileNameJoin[{root, "figures", "generated", "sensitivity_intervals.png"}];
+  Export[fig, SensitivityFigure[rows], ImageResolution -> 160];
+  <|"SensitivityFile" -> file, "SensitivityFigure" -> fig|>
 ];
 
 End[];

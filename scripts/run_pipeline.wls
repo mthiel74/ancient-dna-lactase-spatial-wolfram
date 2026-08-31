@@ -1,4 +1,4 @@
-#!/usr/local/bin/wolframscript -script
+#!/usr/bin/env wolframscript
 
 root = DirectoryName[DirectoryName[$InputFileName]];
 Get[FileNameJoin[{root, "src", "LactasePersistenceSpatial.wl"}]];
@@ -7,9 +7,12 @@ getArg[name_, default_] := Module[{pos = FirstPosition[$ScriptCommandLine, name,
   If[MissingQ[pos] || pos[[1]] >= Length[$ScriptCommandLine], default, ToExpression[$ScriptCommandLine[[pos[[1]] + 1]]]]
 ];
 
-simulationCount = getArg["--simulations", 200];
-retainCount = getArg["--retain", 40];
-cvSimulationCount = getArg["--cv-simulations", 80];
+particles = getArg["--particles", 400];
+generations = getArg["--generations", 5];
+posteriorDraws = getArg["--posterior-draws", 100];
+cvParticles = getArg["--cv-particles", 150];
+cvGenerations = getArg["--cv-generations", 4];
+runSensitivity = getArg["--sensitivity", 1];
 
 Print["Ensuring project layout..."];
 LactasePersistenceSpatial`EnsureProjectLayout[root];
@@ -23,43 +26,78 @@ processed = LactasePersistenceSpatial`WriteProcessedData[root, raw];
 samples = processed["CalledSamples"];
 Print["Called samples with age/location: " <> ToString[Length[samples]]];
 
-Print["Fitting published-style regional logistic trajectories..."];
+Print["Fitting regional binomial logistic trajectories..."];
 fits = LactasePersistenceSpatial`FitAllRegionalLogistics[samples];
 regionalOutputs = LactasePersistenceSpatial`ExportRegionalFitOutputs[root, samples, fits];
 
-Print["Building coarse Europe grid and running ABC spatial inference..."];
+Print["Building coarse Europe grid..."];
 grid = LactasePersistenceSpatial`BuildEuropeGrid[];
-abc = LactasePersistenceSpatial`RunABC[samples, grid,
-  "SimulationCount" -> simulationCount,
-  "RetainCount" -> retainCount,
-  "Seed" -> 20260831
+
+Print["Running SMC-ABC (" <> ToString[particles] <> " particles, " <>
+  ToString[generations] <> " generations)..."];
+smcStart = AbsoluteTime[];
+smc = LactasePersistenceSpatial`RunSMCABC[samples, grid,
+  "Particles" -> particles,
+  "Generations" -> generations,
+  "Seed" -> 20260831,
+  "ProgressFunction" -> Function[{g, eps, acc, ess},
+    Print["  generation " <> ToString[g] <> ": epsilon " <> ToString[NumberForm[eps, {6, 4}]] <>
+      ", acceptance " <> ToString[NumberForm[100. acc, {5, 1}]] <> "%, ESS " <>
+      ToString[NumberForm[ess, {6, 1}]]]]
 ];
-abcOutputs = LactasePersistenceSpatial`ExportABCOutputs[root, samples, grid, abc];
+Print["  total simulations: " <> ToString[smc["TotalSimulations"]] <>
+  " in " <> ToString[NumberForm[AbsoluteTime[] - smcStart, {7, 1}]] <> " s"];
+If[TrueQ[smc["GenerationShortfall"]],
+  Print["  note: a generation hit its simulation budget; tolerance schedule stopped early."]];
+
+draws = LactasePersistenceSpatial`ResamplePosterior[smc, posteriorDraws];
+smcOutputs = LactasePersistenceSpatial`ExportSMCOutputs[root, samples, grid, smc, draws];
 
 Print["Running held-out-region cross-validation..."];
-cv = LactasePersistenceSpatial`RunCrossValidation[samples, grid,
-  "SimulationCount" -> cvSimulationCount,
-  "RetainCount" -> Min[25, retainCount],
-  "Seed" -> 260831
-];
+cv = LactasePersistenceSpatial`RunSMCCrossValidation[samples, grid,
+  "Particles" -> cvParticles, "Generations" -> cvGenerations];
 cvFile = FileNameJoin[{root, "data", "processed", "cross_validation_by_region.csv"}];
 LactasePersistenceSpatial`Private`ExportRows[cvFile, cv];
 
+Print["Running time-slice validation (train > 2500 BP, predict <= 2500 BP)..."];
+timeSlice = LactasePersistenceSpatial`RunTimeSliceValidation[samples, grid,
+  "Particles" -> cvParticles, "Generations" -> cvGenerations];
+timeSliceFile = FileNameJoin[{root, "data", "processed", "time_slice_validation.csv"}];
+LactasePersistenceSpatial`Private`ExportRows[timeSliceFile, {KeyDrop[timeSlice, "PosteriorPredictive"]}];
+timeSlicePPCFile = FileNameJoin[{root, "data", "processed", "time_slice_posterior_predictive.csv"}];
+LactasePersistenceSpatial`Private`ExportRows[timeSlicePPCFile, timeSlice["PosteriorPredictive"]];
+
+sensitivityOutputs = <||>;
+If[runSensitivity =!= 0,
+  Print["Running prior and dairying-onset sensitivity analysis..."];
+  sensitivityRows = LactasePersistenceSpatial`RunSensitivityAnalysis[samples,
+    "Particles" -> cvParticles, "Generations" -> cvGenerations];
+  sensitivityOutputs = LactasePersistenceSpatial`ExportSensitivityOutputs[root, sensitivityRows];
+];
+
 Print["Rendering spatial maps and calibrated uncertainty animation..."];
-spatialOutputs = LactasePersistenceSpatial`ExportSpatialVisualizations[root, samples, grid, abc["Posterior"]];
+spatialOutputs = LactasePersistenceSpatial`ExportSpatialVisualizations[root, samples, grid, draws];
 
 summaryFile = LactasePersistenceSpatial`WriteRunSummary[
   root,
   Join[
     KeyDrop[processed, {"Samples", "CalledSamples", "BinnedFrequencies"}],
     regionalOutputs,
-    KeyDrop[abcOutputs, {"PosteriorPredictive"}],
+    KeyDrop[smcOutputs, {"PosteriorPredictive"}],
     spatialOutputs,
-    <|"CrossValidationFile" -> cvFile|>
+    sensitivityOutputs,
+    <|
+      "CrossValidationFile" -> cvFile,
+      "TimeSliceFile" -> timeSliceFile,
+      "InferenceNote" -> "SMC-ABC: " <> ToString[particles] <> " particles, " <>
+        ToString[Length[smc["EpsilonHistory"]]] <> " tolerance generations, final epsilon " <>
+        ToString[NumberForm[Last[smc["EpsilonHistory"]], {6, 4}]] <> ", final ESS " <>
+        ToString[NumberForm[Last[smc["ESSHistory"]], {7, 1}]] <> ", " <>
+        ToString[smc["TotalSimulations"]] <> " total simulations."
+    |>
   ]
 ];
 
 Print["Pipeline complete."];
 Print["Summary: " <> summaryFile];
 Exit[0];
-
