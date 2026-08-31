@@ -1,5 +1,13 @@
 # Mapping the Rise of Lactase Persistence in Ancient European DNA
 
+> **Note:** the canonical Community deliverable is the generated notebook
+> `community/ancient_dna_lactase_persistence.nb` (built by
+> `community/build_notebook.wls`, which computes every number in the prose
+> from the current pipeline outputs at build time). This markdown draft is
+> the narrative source and reflects an earlier 4-degree run; the current
+> model uses a 2-degree landmasked grid, a smooth dairying-onset field, and
+> TemperatureMap-scaled maps.
+
 *A reproducible Wolfram Language pipeline: from raw ancient genotypes to a spatial diffusion–selection model fitted with sequential Monte Carlo ABC, with uncertainty carried through to the final animation.*
 
 ## Introduction

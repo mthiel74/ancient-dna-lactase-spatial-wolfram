@@ -45,6 +45,13 @@ ExtendedObservedData::usage = "ExtendedObservedData[samples, grid] builds binned
 ExtendedDistance::usage = "ExtendedDistance[obsData, trajectory, grid] evaluates the weighted summary distance including spatial-gradient terms.";
 BuildObservationIndex::usage = "BuildObservationIndex[samples, grid] links called samples to grid cells and times for like-for-like summaries.";
 
+ExportHeroAnimation::usage = "ExportHeroAnimation[root, samples, grid, posterior] renders the single-panel cinematic hero time-lapse with year badge, uncertainty inset, and progress bar, exporting MP4 and GIF.";
+LoadOrRunSMCABC::usage = "LoadOrRunSMCABC[root, samples, grid] reloads the stored SMC posterior from data/processed if present, otherwise runs RunSMCABC.";
+
+LogisticExplorer::usage = "LogisticExplorer[samples] returns a self-contained Manipulate: regional binned data with Wilson intervals against an adjustable logistic trajectory.";
+DairyingCovariateExplorer::usage = "DairyingCovariateExplorer[] returns a Manipulate exploring the smooth dairying-onset covariate D(t).";
+SpatialTimeExplorer::usage = "SpatialTimeExplorer[samples, grid, posterior] returns a Manipulate stepping through posterior-mean maps with embedded frames.";
+
 Begin["`Private`"];
 
 $GLADAncientGenotypesURL =
@@ -248,6 +255,21 @@ AssignRegion[country_, lat_, lon_] := Module[
     -12 <= lo <= 35 && 35 <= la <= 62, "Other Europe",
     True, "Outside Europe"
   ]
+];
+
+$DairyingAnchors = {
+  {40., 15., 8200.},
+  {38., -4., 7700.},
+  {46., 27., 8000.},
+  {49., 10., 7600.},
+  {53., -2., 6100.},
+  {57., 22., 5600.}
+};
+
+SmoothDairyingOnsetBP[lat_?NumericQ, lon_?NumericQ] := Module[{d2, w},
+  d2 = Max[(lat - #[[1]])^2 + ((lon - #[[2]]) Cos[lat Degree])^2, 0.25] & /@ $DairyingAnchors;
+  w = 1/d2;
+  Total[w $DairyingAnchors[[All, 3]]]/Total[w]
 ];
 
 DairyingOnsetBP[region_String] := Switch[region,
@@ -516,7 +538,19 @@ ExportRegionalFitOutputs[root_String, samples_List, fits_List] := Module[
   <|"RegionalFitFile" -> fitFile, "RegionalFigure" -> figFile|>
 ];
 
-BuildEuropeGrid[step_: 4, onsetShiftYears_: 0] := Module[{cells, id = 0},
+FilterLandCells[cells_List] := Module[{elevations},
+  elevations = Quiet@Check[
+    QuantityMagnitude[GeoElevationData[GeoPosition[{#["Latitude"], #["Longitude"]} & /@ cells]]],
+    ConstantArray[1., Length[cells]]
+  ];
+  If[! ListQ[elevations] || Length[elevations] =!= Length[cells], Return[cells]];
+  MapIndexed[
+    Append[#1, "CellID" -> First[#2]] &,
+    Pick[cells, NumericValueQ[#] && # > -10 & /@ elevations]
+  ]
+];
+
+BuildEuropeGrid[step_: 2, onsetShiftYears_: 0] := Module[{cells, id = 0},
   cells = Flatten[
     Table[
       Module[{region = AssignRegion["", lat, lon]},
@@ -527,7 +561,7 @@ BuildEuropeGrid[step_: 4, onsetShiftYears_: 0] := Module[{cells, id = 0},
             "Latitude" -> N[lat],
             "Longitude" -> N[lon],
             "Region" -> region,
-            "DairyingOnsetBP" -> DairyingOnsetBP[region] + onsetShiftYears,
+            "DairyingOnsetBP" -> SmoothDairyingOnsetBP[N[lat], N[lon]] + onsetShiftYears,
             "StepDegrees" -> step
           |>,
           Nothing
@@ -538,7 +572,7 @@ BuildEuropeGrid[step_: 4, onsetShiftYears_: 0] := Module[{cells, id = 0},
     ],
     1
   ];
-  cells
+  FilterLandCells[cells]
 ];
 
 BuildNeighborList[grid_List, step_: 4] := Module[{positions, index},
@@ -838,8 +872,8 @@ ExponentialCovariance[a_List, b_List, range_?NumericQ] := Exp[-EuclideanDistance
 OrdinaryKrigingWeights[
   dataCoords_List,
   predictionCoords_List,
-  range_: 7.5,
-  nugget_: 0.03
+  range_: 3.5,
+  nugget_: 0.02
 ] := Module[
   {n = Length[dataCoords], covarianceMatrix, systemMatrix, solver},
   covarianceMatrix = Table[
@@ -865,24 +899,37 @@ OrdinaryKrigingWeights[
 OrdinaryKrigingPredictor[
   coords_List,
   values_List,
-  range_: 7.5,
-  nugget_: 0.03
+  range_: 3.5,
+  nugget_: 0.02
 ] := Module[
   {numericValues = N[values], weightsFor},
   weightsFor[coord_] := First@OrdinaryKrigingWeights[coords, {coord}, range, nugget];
   Function[{coord}, Clip[weightsFor[coord].numericValues, {0, 1}]]
 ];
 
-KrigingSurfaceSupport[grid_List, resolution_: 1.5] := Module[
-  {latCenters, lonCenters, geoCoordinates, predictionCoords, dataCoords},
+KrigingSurfaceSupport[grid_List, resolution_: 0.5] := Module[
+  {latCenters, lonCenters, geoCoordinates, predictionCoords, dataCoords, landMask, domainMask},
   latCenters = Range[$EuropeGeoRange[[1, 1]] + resolution/2, $EuropeGeoRange[[1, 2]] - resolution/2, resolution];
   lonCenters = Range[$EuropeGeoRange[[2, 1]] + resolution/2, $EuropeGeoRange[[2, 2]] - resolution/2, resolution];
   geoCoordinates = Flatten[Table[{lat, lon}, {lat, latCenters}, {lon, lonCenters}], 1];
   predictionCoords = GeoCoordinateToKrigingPoint /@ geoCoordinates;
   dataCoords = GeoCoordinateToKrigingPoint /@ ({#["Latitude"], #["Longitude"]} & /@ grid);
+  landMask = Quiet@Check[
+    Map[If[NumericValueQ[#] && # > -10, 1., 0.] &,
+      QuantityMagnitude[GeoElevationData[GeoPosition[geoCoordinates]]]],
+    ConstantArray[1., Length[geoCoordinates]]
+  ];
+  If[! ListQ[landMask] || Length[landMask] =!= Length[geoCoordinates],
+    landMask = ConstantArray[1., Length[geoCoordinates]]];
+  domainMask = Module[{nfCells = Nearest[dataCoords]},
+    Map[If[EuclideanDistance[#, First[nfCells[#]]] <= 3., 1., 0.] &, predictionCoords]];
   <|
     "GeoCoordinates" -> geoCoordinates,
     "HalfStep" -> resolution/2,
+    "LatCount" -> Length[latCenters],
+    "LonCount" -> Length[lonCenters],
+    "LandMask" -> landMask,
+    "DomainMask" -> domainMask,
     "Weights" -> OrdinaryKrigingWeights[dataCoords, predictionCoords]
   |>
 ];
@@ -925,26 +972,84 @@ GeoPointLayer[samples_List] := If[samples === {},
   ]
 ];
 
-SpatialMap[grid_List, support_Association, values_List, samples_List, label_String, colorFunction_, opacity_: 0.58,
+LandMaskImage[width_Integer, height_Integer] := LandMaskImage[width, height] = Module[
+  {g, raster},
+  g = GeoGraphics[{},
+    GeoRange -> $EuropeGeoRange,
+    GeoProjection -> "Equirectangular",
+    GeoBackground -> GeoStyling[{"CountryBorders",
+      "Land" -> White, "Ocean" -> Black, "Border" -> White}],
+    GeoGridLines -> None, GeoRangePadding -> None,
+    PlotRangePadding -> None, ImagePadding -> None, ImageMargins -> 0,
+    ImageSize -> {width, height}];
+  raster = Quiet@Check[
+    ImageResize[Rasterize[g, "Image", RasterSize -> {width, height}], {width, height}],
+    $Failed];
+  If[raster === $Failed, Return[Image[ConstantArray[1., {height, width}]]]];
+  Image[Round[ImageData[ColorConvert[raster, "Grayscale"]]]]
+];
+
+FieldOverlayImage[support_Association, values_List, colorFunction_, valueRange_, opacity_, width_Integer, height_Integer] := Module[
+  {vals, matrix, colored, img, maskImg, domainImg},
+  vals = KrigedSurfaceValues[support, values];
+  matrix = Reverse[Partition[vals, support["LonCount"]]];
+  colored = Map[
+    List @@ ColorConvert[colorFunction[Clip[Rescale[#, valueRange], {0, 1}]^0.55], "RGB"] &,
+    matrix, {2}
+  ];
+  img = ImageResize[Image[colored], {width, height}];
+  maskImg = LandMaskImage[width, height];
+  domainImg = ImageResize[
+    Image[Reverse[Partition[Lookup[support, "DomainMask", ConstantArray[1., Length[vals]]], support["LonCount"]]]],
+    {width, height}];
+  SetAlphaChannel[img, ImageMultiply[ImageMultiply[maskImg, domainImg], opacity]]
+];
+
+$MapPixelWidth = 1152;
+$MapAspect = ($EuropeGeoRange[[1, 2]] - $EuropeGeoRange[[1, 1]])/($EuropeGeoRange[[2, 2]] - $EuropeGeoRange[[2, 1]]);
+
+BaseMapRaster[width_Integer] := BaseMapRaster[width] = Module[{h, g},
+  h = Round[width $MapAspect];
+  g = GeoGraphics[{},
+    GeoRange -> $EuropeGeoRange,
+    GeoProjection -> "Equirectangular",
+    GeoBackground -> GeoStyling[{"CountryBorders",
+      "Land" -> GrayLevel[0.985], "Ocean" -> RGBColor[0.82, 0.89, 0.95]}],
+    GeoGridLines -> None, GeoRangePadding -> None,
+    PlotRangePadding -> None, ImagePadding -> None, ImageMargins -> 0,
+    ImageSize -> {width, h}];
+  ImageResize[Rasterize[g, "Image", RasterSize -> {width, h}], {width, h}]
+];
+
+SamplePointsRaster[samples_List, width_Integer, height_Integer] := Module[{pts},
+  If[samples === {}, Return[None]];
+  pts = {#["Longitude"], #["Latitude"]} & /@ samples;
+  Rasterize[
+    Graphics[
+      {White, PointSize[0.011], Point[pts], Black, PointSize[0.0062], Point[pts]},
+      PlotRange -> {{$EuropeGeoRange[[2, 1]], $EuropeGeoRange[[2, 2]]},
+        {$EuropeGeoRange[[1, 1]], $EuropeGeoRange[[1, 2]]}},
+      PlotRangePadding -> None, ImagePadding -> None, ImageMargins -> 0,
+      AspectRatio -> Full, Background -> None,
+      ImageSize -> {width, height}],
+    "Image", RasterSize -> {width, height}, Background -> None]
+];
+
+SpatialMap[grid_List, support_Association, values_List, samples_List, label_String, colorFunction_, opacity_: 0.92,
   valueRange_: {0, 1}, legendLabel_: "frequency"] := Module[
-  {legendColorFunction},
+  {legendColorFunction, w, h, base, overlay, ptsImg, composed},
   legendColorFunction = (colorFunction[Clip[Rescale[#, valueRange], {0, 1}]^0.55] &);
+  w = $MapPixelWidth; h = Round[w $MapAspect];
+  base = BaseMapRaster[w];
+  overlay = FieldOverlayImage[support, values, colorFunction, valueRange, opacity, w, h];
+  composed = ImageCompose[base, overlay];
+  ptsImg = SamplePointsRaster[samples, w, h];
+  If[ImageQ[ptsImg], composed = ImageCompose[composed, ptsImg]];
   Framed[
     Legended[
-      GeoGraphics[
-        Join[
-          Flatten@KrigedSurfaceLayer[support, values, colorFunction, opacity, valueRange],
-          GeoPointLayer[samples]
-        ],
-        GeoRange -> $EuropeGeoRange,
-        GeoProjection -> "Equirectangular",
-        GeoBackground -> "CountryBorders",
-        GeoGridLines -> Automatic,
-        GeoGridLinesStyle -> Directive[White, Opacity[0.16]],
-        Background -> RGBColor[0.92, 0.94, 0.95],
-        PlotLabel -> Style[label, 13, Bold, Black],
-        ImageSize -> 610
-      ],
+      Labeled[
+        Image[composed, ImageSize -> 640],
+        Style[label, 13, Bold, Black], Top],
       Placed[
         BarLegend[
           {legendColorFunction, valueRange},
@@ -986,15 +1091,7 @@ ExportSpatialVisualizations[root_String, samples_List, grid_List, posterior_List
   times = Range[8000, 0, -500];
   stats = PosteriorCellStats[posterior, grid, times];
   krigingSupport = KrigingSurfaceSupport[grid, 1.5];
-  meanCF = (Blend[
-      {RGBColor[0.267, 0.005, 0.329], RGBColor[0.283, 0.141, 0.458],
-       RGBColor[0.254, 0.265, 0.530], RGBColor[0.207, 0.372, 0.553],
-       RGBColor[0.164, 0.471, 0.558], RGBColor[0.128, 0.567, 0.551],
-       RGBColor[0.135, 0.659, 0.518], RGBColor[0.267, 0.749, 0.441],
-       RGBColor[0.478, 0.821, 0.318], RGBColor[0.741, 0.873, 0.150],
-       RGBColor[0.993, 0.906, 0.144]},
-      #
-    ] &);
+  meanCF = (ColorData["TemperatureMap"][#] &);
   uncertaintyCF = (Blend[
       {RGBColor[0.98, 0.98, 0.98], RGBColor[1.0, 0.88, 0.18],
        RGBColor[1.0, 0.42, 0.04], RGBColor[0.70, 0.0, 0.70]},
@@ -1008,13 +1105,13 @@ ExportSpatialVisualizations[root_String, samples_List, grid_List, posterior_List
   Export[
     meanMapFile,
     SpatialMap[grid, krigingSupport, meanValues, sampleWindow,
-      "Kriged posterior mean LP frequency, 3000 BP", meanCF, 0.65, {0, 0.5}, "mean frequency"],
+      "Kriged posterior mean LP frequency, 3000 BP", meanCF, 0.92, {0, 0.5}, "mean frequency"],
     ImageResolution -> 160
   ];
   Export[
     uncertaintyMapFile,
     SpatialMap[grid, krigingSupport, uncertaintyValues, sampleWindow,
-      "Kriged 95% interval width, 3000 BP", uncertaintyCF, 0.65, {0, 1.0}, "95% interval width"],
+      "Kriged 95% interval width, 3000 BP", uncertaintyCF, 0.92, {0, 1.0}, "95% interval width"],
     ImageResolution -> 160
   ];
   frames = Table[
@@ -1023,9 +1120,9 @@ ExportSpatialVisualizations[root_String, samples_List, grid_List, posterior_List
         GraphicsGrid[
           {{
             SpatialMap[grid, krigingSupport, mean, s, "Kriged mean frequency, " <> ToString[t] <> " BP",
-              meanCF, 0.65, {0, 0.5}, "mean frequency"],
+              meanCF, 0.92, {0, 0.5}, "mean frequency"],
             SpatialMap[grid, krigingSupport, width, s, "Kriged uncertainty width, " <> ToString[t] <> " BP",
-              uncertaintyCF, 0.65, {0, 1.0}, "95% width"]
+              uncertaintyCF, 0.92, {0, 1.0}, "95% width"]
           }},
           Spacings -> {0.2, 0.1},
           ImageSize -> 1500
@@ -1684,6 +1781,246 @@ ExportSensitivityOutputs[root_String, rows_List] := Module[{file, fig},
   fig = FileNameJoin[{root, "figures", "generated", "sensitivity_intervals.png"}];
   Export[fig, SensitivityFigure[rows], ImageResolution -> 160];
   <|"SensitivityFile" -> file, "SensitivityFigure" -> fig|>
+];
+
+
+(* ------------------------------------------------------------------ *)
+(* Cinematic hero animation: single-panel posterior time-lapse with   *)
+(* year badge, progress bar, sample dots, and an uncertainty inset.   *)
+(* All frames are pure raster composition over one cached base map,   *)
+(* so 80+ frames render in seconds.                                   *)
+(* ------------------------------------------------------------------ *)
+
+$UncertaintyColorFunction = (Blend[
+   {RGBColor[0.98, 0.98, 0.98], RGBColor[1.0, 0.88, 0.18],
+    RGBColor[1.0, 0.42, 0.04], RGBColor[0.70, 0.0, 0.70]}, #] &);
+
+FormatYearLabel[bp_?NumericQ] := Module[{yr = Round[1950 - bp]},
+  If[yr < 0, ToString[-yr] <> " BC", "AD " <> ToString[Max[yr, 1]]]
+];
+
+AugmentedCellStats[posterior_List, grid_List, knotTimes_List] := Module[{raw},
+  raw = PosteriorCellStats[posterior, grid, knotTimes];
+  Association @ Table[
+    t -> <|
+      "Mean" -> raw[t]["Mean"],
+      "Width" -> raw[t]["Upper95"] - raw[t]["Lower95"]
+    |>,
+    {t, knotTimes}
+  ]
+];
+
+InterpolatedCellStat[stats_Association, knotTimes_List, t_?NumericQ, prop_String] := Module[
+  {pos, t1, t2, w},
+  If[t >= First[knotTimes], Return[stats[First[knotTimes]][prop]]];
+  If[t <= Last[knotTimes], Return[stats[Last[knotTimes]][prop]]];
+  pos = LengthWhile[knotTimes, # > t &];
+  t1 = knotTimes[[pos]]; t2 = knotTimes[[pos + 1]];
+  w = (t1 - t)/(t1 - t2);
+  (1 - w) stats[t1][prop] + w stats[t2][prop]
+];
+
+YearBadge[t_?NumericQ, widthPx_Integer] := Rasterize[
+  Framed[
+    Style[FormatYearLabel[t], White, Bold, FontSize -> 34, FontFamily -> "Helvetica"],
+    Background -> GrayLevel[0.1, 0.62], RoundingRadius -> 8,
+    FrameStyle -> None, FrameMargins -> {{16, 16}, {8, 8}}],
+  "Image", Background -> None];
+
+CaptionStrip[text_String] := Rasterize[
+  Framed[
+    Style[text, White, FontSize -> 15, FontFamily -> "Helvetica"],
+    Background -> GrayLevel[0.1, 0.55], RoundingRadius -> 6,
+    FrameStyle -> None, FrameMargins -> {{10, 10}, {5, 5}}],
+  "Image", Background -> None];
+
+ProgressBarImage[fraction_?NumericQ, width_Integer, barHeight_Integer: 8] := Module[
+  {filled = Clip[Round[fraction width], {1, width}], row},
+  row = Join[
+    ConstantArray[{0.20, 0.45, 0.72}, filled],
+    ConstantArray[{0.82, 0.84, 0.86}, width - filled]
+  ];
+  Image[ConstantArray[row, barHeight]]
+];
+
+HeroFrame[t_?NumericQ, stats_Association, knotTimes_List, support_Association,
+  samples_List, w_Integer, h_Integer] := Module[
+  {means, widths, base, overlay, composed, pts, inset, badge, caption, bar},
+  means = InterpolatedCellStat[stats, knotTimes, t, "Mean"];
+  widths = InterpolatedCellStat[stats, knotTimes, t, "Width"];
+  base = BaseMapRaster[w];
+  overlay = FieldOverlayImage[support, means, (ColorData["TemperatureMap"][#] &), {0, 0.5}, 0.92, w, h];
+  composed = ImageCompose[base, overlay];
+  pts = SamplePointsRaster[SamplesInWindow[samples, t, 400], w, h];
+  If[ImageQ[pts], composed = ImageCompose[composed, pts]];
+  inset = ImagePad[
+    ImageResize[
+      ImageCompose[base,
+        FieldOverlayImage[support, widths, $UncertaintyColorFunction, {0, 1}, 0.92, w, h]],
+      Round[0.28 w]],
+    3, White];
+  composed = ImageCompose[composed, inset,
+    {w - ImageDimensions[inset][[1]]/2 - 14, ImageDimensions[inset][[2]]/2 + 26}];
+  caption = CaptionStrip["95% credible-interval width"];
+  composed = ImageCompose[composed, caption,
+    {w - ImageDimensions[caption][[1]]/2 - 20,
+     ImageDimensions[inset][[2]] + ImageDimensions[caption][[2]]/2 + 34}];
+  badge = YearBadge[t, Round[0.19 w]];
+  composed = ImageCompose[composed, badge,
+    {ImageDimensions[badge][[1]]/2 + 20, h - ImageDimensions[badge][[2]]/2 - 18}];
+  composed = RemoveAlphaChannel[composed, White];
+  bar = ProgressBarImage[(8000. - t)/8000., w];
+  ImageCompose[composed, bar, {w/2, 8}]
+];
+
+Options[ExportHeroAnimation] = {
+  "StartBP" -> 8000, "FrameStepYears" -> 100, "Width" -> 1280,
+  "SecondsPerFrame" -> 0.12, "HoldFrames" -> 10
+};
+
+ExportHeroAnimation[root_String, samples_List, grid_List, posterior_List, OptionsPattern[]] := Module[
+  {figDir, knotTimes, stats, support, frameTimes, w, h, frames, gifFrames,
+   mp4File, gifFile, iCloudMP4, iCloudGIF, spf, hold},
+  figDir = FileNameJoin[{root, "figures", "generated"}];
+  w = OptionValue["Width"]; h = Round[w $MapAspect];
+  spf = OptionValue["SecondsPerFrame"];
+  hold = OptionValue["HoldFrames"];
+  knotTimes = Range[OptionValue["StartBP"], 0, -250];
+  stats = AugmentedCellStats[posterior, grid, knotTimes];
+  support = KrigingSurfaceSupport[grid];
+  frameTimes = Range[OptionValue["StartBP"], 0, -OptionValue["FrameStepYears"]];
+  frames = Table[HeroFrame[t, stats, knotTimes, support, samples, w, h], {t, frameTimes}];
+  frames = Join[frames, ConstantArray[Last[frames], hold]];
+  mp4File = FileNameJoin[{figDir, "hero_lactase_persistence.mp4"}];
+  ExportMP4FromFrames[mp4File, frames, spf];
+  gifFrames = ImageResize[#, 720] & /@ frames[[1 ;; ;; 2]];
+  gifFile = FileNameJoin[{figDir, "hero_lactase_persistence.gif"}];
+  Export[gifFile, gifFrames, "DisplayDurations" -> 2 spf, AnimationRepetitions -> Infinity];
+  iCloudMP4 = CopyVersionToICloud[mp4File, "hero_lactase_persistence"];
+  iCloudGIF = CopyVersionToICloud[gifFile, "hero_lactase_persistence"];
+  <|"HeroMP4" -> mp4File, "HeroGIF" -> gifFile,
+    "ICloudHeroMP4" -> iCloudMP4, "ICloudHeroGIF" -> iCloudGIF|>
+];
+
+(* --- reconstruct a stored SMC result so notebooks evaluate fast --- *)
+
+LoadOrRunSMCABC[root_String, samples_List, grid_List, opts___] := Module[
+  {particlesFile, diagFile, rows, diag, spec, keys, vectors, weights, particles, obsData},
+  particlesFile = FileNameJoin[{root, "data", "processed", "smc_particles.csv"}];
+  diagFile = FileNameJoin[{root, "data", "processed", "smc_diagnostics.csv"}];
+  If[! (FileExistsQ[particlesFile] && FileExistsQ[diagFile]),
+    Return[RunSMCABC[samples, grid, opts]]
+  ];
+  rows = Map[Association, Normal[Import[particlesFile, "Dataset", HeaderLines -> 1]]];
+  diag = Map[Association, Normal[Import[diagFile, "Dataset", HeaderLines -> 1]]];
+  spec = $PriorSpec;
+  keys = Keys[spec];
+  vectors = Map[
+    Function[row,
+      Table[
+        If[k === "Log10InitialFrequency", Log10[row["InitialFrequency"]], row[k]],
+        {k, keys}
+      ]
+    ],
+    rows
+  ];
+  weights = Normalize[rows[[All, "Weight"]], Total];
+  particles = KeyDrop[#, "Weight"] & /@ rows;
+  obsData = ExtendedObservedData[samples, grid];
+  <|
+    "ParticleVectors" -> vectors,
+    "Particles" -> particles,
+    "Weights" -> weights,
+    "ParameterKeys" -> keys,
+    "EpsilonHistory" -> diag[[All, "Epsilon"]],
+    "AcceptanceHistory" -> diag[[All, "AcceptanceRate"]],
+    "ESSHistory" -> DeleteMissing[diag[[All, "ESS"]]],
+    "TotalSimulations" -> Missing["LoadedFromDisk"],
+    "GenerationShortfall" -> False,
+    "ObservedSummaries" -> obsData["Binned"],
+    "PriorSpecUsed" -> spec
+  |>
+];
+
+
+(* --- self-contained interactive explorers for the Community notebook --- *)
+
+LogisticExplorer[samples_List] := Module[{binned, dataAssoc},
+  binned = Select[RegionalBinnedFrequencies[samples],
+    MemberQ[$AnalysisRegions, #Region] && #CalledAlleles >= 2 &];
+  dataAssoc = Association @ Table[
+    r -> Map[
+      Join[{#TimeBinMidBP, #Frequency}, WilsonInterval[#DerivedAlleles, #CalledAlleles], {#CalledAlleles}] &,
+      Select[binned, #Region == r &]],
+    {r, $AnalysisRegions}];
+  With[{data = dataAssoc, regions = $AnalysisRegions, colors = $RegionColors},
+    Manipulate[
+      Module[{pts = data[region], color = Lookup[colors, region, Black]},
+        Show[
+          Graphics[{
+            {color, Opacity[0.5], AbsoluteThickness[1.4],
+             Line[{{#[[1]], #[[3]]}, {#[[1]], #[[4]]}}] & /@ pts},
+            {color, Opacity[0.95],
+             Table[{PointSize[0.008 + 0.010 Sqrt[p[[5]]/250.]],
+               Point[{p[[1]], p[[2]]}]}, {p, pts}]}
+          }],
+          Plot[1/(1 + Exp[-(alpha + beta (10000 - bp)/1000)]), {bp, 0, 10000},
+            PlotStyle -> Directive[GrayLevel[0.2], AbsoluteThickness[1.8]]],
+          Frame -> True, Axes -> False, AspectRatio -> 1/GoldenRatio,
+          PlotRange -> {{0, 10000}, {-0.03, 1.02}},
+          FrameLabel -> {"years BP", "derived-allele frequency"},
+          PlotLabel -> Style["implied selection per generation \[TildeTilde] " <>
+            ToString[NumberForm[beta 28/1000., {4, 3}]], 11.5],
+          ImageSize -> 560, LabelStyle -> Directive[Black, 11]
+        ]
+      ],
+      {{alpha, -9.5, "\[Alpha]"}, -16., 0.},
+      {{beta, 0.9, "\[Beta] per kyr"}, 0., 2.5},
+      {{region, "Mediterranean", "region"}, regions},
+      SaveDefinitions -> False
+    ]
+  ]
+];
+
+DairyingCovariateExplorer[] := Manipulate[
+  Plot[1/(1 + Exp[(t - onset)/scale]), {t, 0, 10000},
+    PlotStyle -> Directive[RGBColor[0.153, 0.51, 0.64], AbsoluteThickness[2]],
+    Frame -> True, Axes -> False,
+    PlotRange -> {{0, 10000}, {-0.03, 1.03}},
+    ScalingFunctions -> {"Reverse", None},
+    FrameLabel -> {"years BP", "dairying covariate D(t)"},
+    Epilog -> {GrayLevel[0.5], Dashed, Line[{{onset, -0.03}, {onset, 1.03}}],
+      Text[Style["onset", 10, GrayLevel[0.35]], {onset, 0.95}]},
+    ImageSize -> 520, LabelStyle -> Directive[Black, 11]],
+  {{onset, 7600., "regional onset BP"}, 5000., 9000.},
+  {{scale, 350., "smoothing scale (years)"}, 100., 900.},
+  SaveDefinitions -> False
+];
+
+SpatialTimeExplorer[samples_List, grid_List, posterior_List, times_List: {}] := Module[
+  {ts, support, stats, frames},
+  ts = If[times === {}, Range[8000, 0, -1000], times];
+  support = KrigingSurfaceSupport[grid];
+  stats = PosteriorCellStats[posterior, grid, ts];
+  frames = Table[
+    Module[{w = 760, h, base, overlay, pts, composed},
+      h = Round[w $MapAspect];
+      base = BaseMapRaster[w];
+      overlay = FieldOverlayImage[support, stats[t]["Mean"],
+        (ColorData["TemperatureMap"][#] &), {0, 0.5}, 0.92, w, h];
+      composed = ImageCompose[base, overlay];
+      pts = SamplePointsRaster[SamplesInWindow[samples, t, 400], w, h];
+      If[ImageQ[pts], composed = ImageCompose[composed, pts]];
+      ImageResize[composed, 560]
+    ],
+    {t, ts}];
+  With[{fr = frames, labels = (ToString[#] <> " years BP" &) /@ ts},
+    Manipulate[
+      Labeled[fr[[k]], Style[labels[[k]], Bold, 13], Top],
+      {{k, 1, "time step"}, 1, Length[fr], 1},
+      SaveDefinitions -> False
+    ]
+  ]
 ];
 
 End[];

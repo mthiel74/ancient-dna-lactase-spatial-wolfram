@@ -198,7 +198,7 @@ VerificationTest[
   Module[{g0, gShift},
     g0 = LactasePersistenceSpatial`BuildEuropeGrid[4, 0];
     gShift = LactasePersistenceSpatial`BuildEuropeGrid[4, -400];
-    g0[[1, "DairyingOnsetBP"]] - gShift[[1, "DairyingOnsetBP"]]
+    Round[g0[[1, "DairyingOnsetBP"]] - gShift[[1, "DairyingOnsetBP"]]]
   ],
   400,
   TestID -> "grid-onset-shift"

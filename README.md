@@ -6,9 +6,13 @@ Repository target: `mthiel74/ancient-dna-lactase-spatial-wolfram`
 
 ## Results at a Glance
 
-![Spatial posterior animation: mean frequency and 95% interval width, 8000 BP to present](figures/generated/lactase_persistence_spatial_posterior.gif)
+![Hero animation: posterior mean LP frequency across Europe, 8000 BC to today](figures/generated/hero_lactase_persistence.gif)
 
-*Posterior mean rs4988235-derived allele frequency (left) and 95% credible-interval width (right), 8000 BP to the present in 500-year steps; white-ringed dots are the ancient samples within +/-500 years of each frame. The same animation as H.264 video: [lactase_persistence_spatial_posterior.mp4](figures/generated/lactase_persistence_spatial_posterior.mp4).*
+*The hero time-lapse: kriged posterior mean rs4988235-derived allele frequency over a landmasked 2-degree grid, 8000 BP to the present in 100-year interpolated steps, with the ancient samples of each moving window, a 95% credible-interval inset, and a progress bar. H.264 video: [hero_lactase_persistence.mp4](figures/generated/hero_lactase_persistence.mp4).*
+
+![Dual-panel calibrated animation](figures/generated/lactase_persistence_spatial_posterior.gif)
+
+*The calibrated dual-panel version: posterior mean (left) and 95% credible-interval width (right) at equal rank, 500-year steps. H.264 video: [lactase_persistence_spatial_posterior.mp4](figures/generated/lactase_persistence_spatial_posterior.mp4).*
 
 ![Regional logistic reproduction with Wilson intervals](figures/generated/regional_logistic_reproduction.png)
 
