@@ -4,6 +4,36 @@ Extended Markdown specification for a Wolfram Language project that moves from r
 
 Repository target: `mthiel74/ancient-dna-lactase-spatial-wolfram`
 
+## Results at a Glance
+
+![Spatial posterior animation: mean frequency and 95% interval width, 8000 BP to present](figures/generated/lactase_persistence_spatial_posterior.gif)
+
+*Posterior mean rs4988235-derived allele frequency (left) and 95% credible-interval width (right), 8000 BP to the present in 500-year steps; white-ringed dots are the ancient samples within +/-500 years of each frame. The same animation as H.264 video: [lactase_persistence_spatial_posterior.mp4](figures/generated/lactase_persistence_spatial_posterior.mp4).*
+
+![Regional logistic reproduction with Wilson intervals](figures/generated/regional_logistic_reproduction.png)
+
+*Observed regional binned frequencies (points sized by called-allele count, 95% Wilson intervals) with fitted binomial logistic trajectories.*
+
+![Posterior parameter distributions with prior overlays](figures/generated/abc_parameter_posteriors.png)
+
+*Weighted SMC posterior (blue) against the flat prior (dashed orange) for all ten parameters; informed and prior-dominated dimensions are equally visible.*
+
+![Posterior predictive check](figures/generated/posterior_predictive_regional.png)
+
+*Posterior predictive 95% intervals against the 37 observed regional time bins; empirical coverage 0.97.*
+
+![Prior and dairying-onset sensitivity](figures/generated/sensitivity_intervals.png)
+
+*Posterior medians and 95% intervals under five prior/onset scenarios: the dairying-modulated selection component stays positive throughout; migration tracks its prior.*
+
+![Kriged posterior mean, 3000 BP](figures/generated/spatial_posterior_mean_3000bp.png)
+
+![Kriged 95% interval width, 3000 BP](figures/generated/spatial_uncertainty_width_3000bp.png)
+
+*Kriged posterior mean and uncertainty at 3000 BP; kriging is a display layer over the coarse 4-degree inference grid.*
+
+The long-form Wolfram Community notebook (figures and animation embedded) is `community/ancient_dna_lactase_persistence.nb` with a PDF export beside it, rebuilt by `community/build_notebook.wls`; an interactive walkthrough of the pipeline is `notebooks/LactasePersistenceSpatial.nb`.
+
 ## Current Executable Baseline
 
 This repository now contains a runnable Wolfram Language baseline for the full workflow:
@@ -262,6 +292,7 @@ notebooks/
 src/
 tests/
 figures/
+community/
 docs/
 .github/
   workflows/
@@ -275,6 +306,7 @@ Folder roles:
 - `src/`: reusable Wolfram Language package code.
 - `tests/`: `VerificationTest` files and small fixtures.
 - `figures/`: generated plots, maps, and animation frames.
+- `community/`: the buildable Wolfram Community notebook (`build_notebook.wls`), the built `.nb`, and its PDF export.
 - `docs/`: narrative notes, Wolfram Community post draft, and exported documentation assets.
 - `.github/workflows/`: non-interactive CI configuration.
 

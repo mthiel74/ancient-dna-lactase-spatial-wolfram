@@ -1,0 +1,276 @@
+(* Content-type: application/vnd.wolfram.mathematica *)
+
+(*** Wolfram Notebook File ***)
+(* http://www.wolfram.com/nb *)
+
+(* CreatedBy='Wolfram 15.0' *)
+
+(*CacheID: 234*)
+(* Internal cache information:
+NotebookFileLineBreakTest
+NotebookFileLineBreakTest
+NotebookDataPosition[       154,          7]
+NotebookDataLength[     13368,        267]
+NotebookOptionsPosition[      9642,        217]
+NotebookOutlinePosition[      9984,        232]
+CellTagsIndexPosition[      9941,        229]
+WindowFrame->Normal*)
+
+(* Beginning of Notebook Content *)
+Notebook[{
+Cell["Ancient DNA Lactase Persistence", "Title",ExpressionUUID->"b28422fc-91ff-4d3d-8369-216c36118626"],
+
+Cell["\<\
+A spatial diffusion-selection model for rs4988235 fitted with SMC-ABC, in \
+Wolfram Language\
+\>", "Subtitle",ExpressionUUID->"131d57d3-8507-4791-a300-4b69963344bc"],
+
+Cell["\<\
+This notebook walks through the full pipeline interactively: data retrieval \
+and parsing, regional binomial logistic reproduction, the coarse spatial \
+model, SMC-ABC inference with spatial-gradient summary statistics, posterior \
+predictive checks, held-out validation, sensitivity analysis, and the \
+calibrated maps and animation. The reusable code lives in \
+src/LactasePersistenceSpatial.wl; scripts/run_pipeline.wls runs everything \
+non-interactively. Interactive settings below are slightly smaller than the \
+script defaults so each step stays responsive; results in the repository \
+README and the Wolfram Community post use the script defaults (400 particles, \
+5 generations).\
+\>", "Text",ExpressionUUID->"8e99dfe9-4314-4a18-9838-537c992beebe"],
+
+Cell["Setup", "Section",ExpressionUUID->"15818ff7-0fbd-4117-a202-403215e1f9ee"],
+
+Cell["\<\
+SetDirectory[ParentDirectory[NotebookDirectory[]]];
+Get[FileNameJoin[{Directory[], \"src\", \"LactasePersistenceSpatial.wl\"}]];\
+\>", "Input",ExpressionUUID->"a8dceada-2469-426d-817e-9f60db68f0c6"],
+
+Cell["Data", "Section",ExpressionUUID->"f1bd07a5-e6cf-43f0-af86-88ff26b89e08"],
+
+Cell["\<\
+Download the public GLAD ancient rs4988235 workbook (derived from AADR v44.3, \
+used for Evershed et al. 2022) if it is not already present, parse it, and \
+keep the samples with a genotype call, an age, and coordinates. Raw data are \
+checksummed and set read-only; processed tables carry provenance.\
+\>", "Text",ExpressionUUID->"80aa757b-7122-4208-92ab-a8fb28403b6c"],
+
+Cell["\<\
+raw = RetrieveRawData[Directory[]];
+processed = WriteProcessedData[Directory[], raw];
+samples = processed[\"CalledSamples\"];
+Length[samples]\
+\>", "Input",ExpressionUUID->"13b02736-270e-486f-8843-bc29c3e07abc"],
+
+Cell["\<\
+GeoListPlot[
+ GeoPosition[{#[\"Latitude\"], #[\"Longitude\"]} & /@ samples],
+ GeoRange -> {{34, 63}, {-12, 36}},
+ PlotStyle -> Directive[Opacity[0.5], PointSize[0.004]],
+ GeoBackground -> \"CountryBorders\", ImageSize -> 560]\
+\>", "Input",ExpressionUUID->"345eb0b9-5d13-49dc-85b6-f3fb822c2a45"],
+
+Cell["Regional logistic reproduction", "Section",ExpressionUUID->"d4c76f3a-192a-44ae-b538-4f95b1c71e45"],
+
+Cell["\<\
+For each of the four analysis regions the binomial log-likelihood of a \
+logistic trajectory logit p(t) = alpha + beta (10000 - t)/1000 is maximized \
+directly over called alleles. Standard errors come from the numerical \
+Hessian, and fits landing on a parameter bound are flagged. Binned points in \
+the figure carry 95% Wilson intervals and are sized by allele count.\
+\>", "Text",ExpressionUUID->"2fbfcf35-39c3-4ba5-b740-28167a0920c8"],
+
+Cell["\<\
+fits = FitAllRegionalLogistics[samples];
+Dataset[fits]\
+\>", "Input",ExpressionUUID->"3083035f-08be-4698-b224-2344b781da20"],
+
+Cell["\<\
+regionalOutputs = ExportRegionalFitOutputs[Directory[], samples, fits];
+Import[regionalOutputs[\"RegionalFigure\"]]\
+\>", "Input",ExpressionUUID->"bd2919b9-bc70-45a8-ab9e-f7d8c4f5cd77"],
+
+Cell["Spatial model", "Section",ExpressionUUID->"3cefb369-44a4-474a-9a5a-918ae8d8069e"],
+
+Cell["\<\
+Europe is a 4-degree grid of 84 cells. Local frequency evolves in 250-year \
+steps under selection s0 + sDairy D(t) m(region), modulated by a smooth \
+regional dairying-onset covariate D(t), plus adjacency-based movement. One \
+forward simulation costs about 26 ms, which is what makes simulation-based \
+inference affordable.\
+\>", "Text",ExpressionUUID->"841bfca7-2ef7-4a37-b8bf-4bfa48336df0"],
+
+Cell["\<\
+grid = BuildEuropeGrid[];
+Length[grid]\
+\>", "Input",ExpressionUUID->"3468e590-c46e-4790-a4f0-07f12e984a9d"],
+
+Cell["\<\
+AbsoluteTiming[
+ SimulateSpatialTrajectory[
+  <|\"InitialFrequency\" -> 0.003, \"SelectionBase\" -> 0.002,
+    \"SelectionDairying\" -> 0.02, \"Migration\" -> 0.003|>, grid];]\
+\>", "Input",ExpressionUUID->"dfb69b10-7937-4eed-a6b5-fe31e09503a2"],
+
+Cell["SMC-ABC inference", "Section",ExpressionUUID->"20ef946c-1e11-4107-abdd-c0d70d731d36"],
+
+Cell["\<\
+Sequential Monte Carlo ABC with an adaptive tolerance schedule (median of the \
+previous population), Gaussian perturbation kernels in logit-transformed \
+parameter space (so every proposal stays inside the uniform prior box and the \
+prior density stays closed-form), and importance weights with ESS tracking. \
+Summaries are the called-allele-weighted regional time-binned frequencies \
+plus matched north-south and west-east spatial contrasts over the last 4000 \
+years, so migration is informed by spatial structure. This cell takes a few \
+minutes.\
+\>", "Text",ExpressionUUID->"68ccb949-01a2-4486-89da-2b046a17898f"],
+
+Cell["\<\
+smc = RunSMCABC[samples, grid, \"Particles\" -> 200, \"Generations\" -> 4,
+  \"ProgressFunction\" -> Function[{g, eps, acc, ess},
+    Print[\"generation \", g, \": epsilon \", eps, \", acceptance \", acc, \
+\", ESS \", ess]]];
+smc[\"TotalSimulations\"]\
+\>", "Input",ExpressionUUID->"31e61c65-8a11-4e51-87bd-0575296d4465"],
+
+Cell["\<\
+draws = ResamplePosterior[smc, 100];
+smcOutputs = ExportSMCOutputs[Directory[], samples, grid, smc, draws];
+Dataset[PosteriorParameterQuantiles[smc]]\
+\>", "Input",ExpressionUUID->"af234f6d-90c6-4fa8-b37f-b6b61bbba692"],
+
+Cell["Import[smcOutputs[\"ParameterFigure\"]]", "Input",ExpressionUUID->"fa3ce0d9-798e-456d-8634-f7b8daecd8b6"],
+
+Cell["\<\
+Each weighted posterior histogram is overlaid on its flat prior, so the \
+informed dimensions (initial frequency, dairying-modulated selection, the \
+northern multipliers) are visible at a glance, and the prior-dominated ones \
+are equally visible. The final ESS is reported in the diagnostics table \
+rather than hidden.\
+\>", "Text",ExpressionUUID->"18527983-0c8b-4a09-838e-2a2528ae1fad"],
+
+Cell["Posterior predictive checks", "Section",ExpressionUUID->"0d37425b-bed2-46b2-af05-f21b9e1987d6"],
+
+Cell["Import[smcOutputs[\"PosteriorPredictiveFigure\"]]", "Input",ExpressionUUID->"cedc2aad-3efa-445a-9082-c248fc36c079"],
+
+Cell["Held-out validation", "Section",ExpressionUUID->"560560e5-2d67-4c03-be05-472c39a55be0"],
+
+Cell["\<\
+Two holdouts, both refitting the model from scratch: each region left out in \
+turn, and a time-slice cut that trains only on samples older than 2500 BP and \
+predicts the most recent bins. The time-slice test under-predicts the recent \
+rise (large RMSE, wide covering intervals): most of the evidence for strong \
+late selection lives in the last three millennia, consistent with Burger et \
+al. 2020. These cells take several minutes.\
+\>", "Text",ExpressionUUID->"28c9026a-0264-4040-8e21-87103bea315d"],
+
+Cell["\<\
+cv = RunSMCCrossValidation[samples, grid, \"Particles\" -> 100, \"Generations\
+\" -> 3];
+Dataset[cv]\
+\>", "Input",ExpressionUUID->"7060aa56-b2dc-4af6-9c55-722bbd0a25a0"],
+
+Cell["\<\
+timeSlice = RunTimeSliceValidation[samples, grid, \"Particles\" -> 100, \
+\"Generations\" -> 3];
+Dataset[{KeyDrop[timeSlice, \"PosteriorPredictive\"]}]\
+\>", "Input",ExpressionUUID->"567bedb2-918e-49fa-81b3-873b809395e8"],
+
+Cell["Sensitivity analysis", "Section",ExpressionUUID->"b58be951-9620-43e3-9f1b-30cbdcb9805f"],
+
+Cell["\<\
+The full fit rerun under five scenarios: baseline, halved selection priors, \
+doubled migration prior, and dairying onsets shifted 400 years earlier or \
+later. The dairying-modulated selection component stays positive throughout; \
+the migration posterior tracks its prior and is reported as weakly identified.\
+\>", "Text",ExpressionUUID->"8630c71b-34c7-41de-af1a-07ab681bfcc5"],
+
+Cell["\<\
+sensitivityRows = RunSensitivityAnalysis[samples, \"Particles\" -> 100, \
+\"Generations\" -> 3];
+sensOutputs = ExportSensitivityOutputs[Directory[], sensitivityRows];
+Import[sensOutputs[\"SensitivityFigure\"]]\
+\>", "Input",ExpressionUUID->"5a75e346-a4a8-4833-94ad-8f359fcb4604"],
+
+Cell["Maps and animation", "Section",ExpressionUUID->"9b1bfa50-2a31-4321-8d7d-e1d747dbef55"],
+
+Cell["\<\
+Kriged posterior mean frequency and 95% interval width over the coarse grid; \
+ordinary kriging is a display interpolation only, the grid remains the \
+inferential unit. The animation pairs both panels from 8000 BP to the present \
+in 500-year steps with the ancient samples of each time window drawn on the \
+map. The MP4 is encoded directly from the raster frames (H.264).\
+\>", "Text",ExpressionUUID->"a8f3365d-cc8e-4e11-a318-bff59fcbbe28"],
+
+Cell["\<\
+spatial = ExportSpatialVisualizations[Directory[], samples, grid, draws];
+Import[spatial[\"MeanMap\"]]\
+\>", "Input",ExpressionUUID->"f91ebe3e-b9c7-4703-8cc9-3eb7f609769b"],
+
+Cell["Import[spatial[\"UncertaintyMap\"]]", "Input",ExpressionUUID->"aa8c79b3-7eed-4590-8204-3517061e1e01"],
+
+Cell["\<\
+ListAnimate[Import[spatial[\"Animation\"]], AnimationRate -> 1.4, \
+DefaultDuration -> 12]\
+\>", "Input",ExpressionUUID->"f3fe5628-127c-458c-afc2-1ff7b9b90637"],
+
+Cell["Video[spatial[\"MP4\"]]", "Input",ExpressionUUID->"eeed39a1-d24b-4128-9eca-b84cc7a6ad87"]
+},
+WindowSize->{1150, 900},
+FrontEndVersion->"15.0 for Mac OS X ARM (64-bit) (July 2, 2026)",
+StyleDefinitions->"Default.nb",
+ExpressionUUID->"3197ad74-86fe-4f2b-a7df-eb6a3c02b159"
+]
+(* End of Notebook Content *)
+
+(* Internal cache information *)
+(*CellTagsOutline
+CellTagsIndex->{}
+*)
+(*CellTagsIndex
+CellTagsIndex->{}
+*)
+(*NotebookFileOutline
+Notebook[{
+Cell[554, 20, 103, 0, 70, "Title",ExpressionUUID->"b28422fc-91ff-4d3d-8369-216c36118626"],
+Cell[660, 22, 175, 3, 70, "Subtitle",ExpressionUUID->"131d57d3-8507-4791-a300-4b69963344bc"],
+Cell[838, 27, 768, 11, 70, "Text",ExpressionUUID->"8e99dfe9-4314-4a18-9838-537c992beebe"],
+Cell[1609, 40, 79, 0, 70, "Section",ExpressionUUID->"15818ff7-0fbd-4117-a202-403215e1f9ee"],
+Cell[1691, 42, 208, 3, 70, "Input",ExpressionUUID->"a8dceada-2469-426d-817e-9f60db68f0c6"],
+Cell[1902, 47, 78, 0, 70, "Section",ExpressionUUID->"f1bd07a5-e6cf-43f0-af86-88ff26b89e08"],
+Cell[1983, 49, 380, 5, 70, "Text",ExpressionUUID->"80aa757b-7122-4208-92ab-a8fb28403b6c"],
+Cell[2366, 56, 221, 5, 70, "Input",ExpressionUUID->"13b02736-270e-486f-8843-bc29c3e07abc"],
+Cell[2590, 63, 305, 6, 70, "Input",ExpressionUUID->"345eb0b9-5d13-49dc-85b6-f3fb822c2a45"],
+Cell[2898, 71, 104, 0, 70, "Section",ExpressionUUID->"d4c76f3a-192a-44ae-b538-4f95b1c71e45"],
+Cell[3005, 73, 449, 6, 70, "Text",ExpressionUUID->"2fbfcf35-39c3-4ba5-b740-28167a0920c8"],
+Cell[3457, 81, 134, 3, 70, "Input",ExpressionUUID->"3083035f-08be-4698-b224-2344b781da20"],
+Cell[3594, 86, 195, 3, 70, "Input",ExpressionUUID->"bd2919b9-bc70-45a8-ab9e-f7d8c4f5cd77"],
+Cell[3792, 91, 87, 0, 70, "Section",ExpressionUUID->"3cefb369-44a4-474a-9a5a-918ae8d8069e"],
+Cell[3882, 93, 405, 6, 70, "Text",ExpressionUUID->"841bfca7-2ef7-4a37-b8bf-4bfa48336df0"],
+Cell[4290, 101, 118, 3, 70, "Input",ExpressionUUID->"3468e590-c46e-4790-a4f0-07f12e984a9d"],
+Cell[4411, 106, 255, 5, 70, "Input",ExpressionUUID->"dfb69b10-7937-4eed-a6b5-fe31e09503a2"],
+Cell[4669, 113, 91, 0, 70, "Section",ExpressionUUID->"20ef946c-1e11-4107-abdd-c0d70d731d36"],
+Cell[4763, 115, 632, 9, 70, "Text",ExpressionUUID->"68ccb949-01a2-4486-89da-2b046a17898f"],
+Cell[5398, 126, 332, 6, 70, "Input",ExpressionUUID->"31e61c65-8a11-4e51-87bd-0575296d4465"],
+Cell[5733, 134, 229, 4, 70, "Input",ExpressionUUID->"af234f6d-90c6-4fa8-b37f-b6b61bbba692"],
+Cell[5965, 140, 111, 0, 70, "Input",ExpressionUUID->"fa3ce0d9-798e-456d-8634-f7b8daecd8b6"],
+Cell[6079, 142, 400, 6, 70, "Text",ExpressionUUID->"18527983-0c8b-4a09-838e-2a2528ae1fad"],
+Cell[6482, 150, 101, 0, 70, "Section",ExpressionUUID->"0d37425b-bed2-46b2-af05-f21b9e1987d6"],
+Cell[6586, 152, 121, 0, 70, "Input",ExpressionUUID->"cedc2aad-3efa-445a-9082-c248fc36c079"],
+Cell[6710, 154, 93, 0, 70, "Section",ExpressionUUID->"560560e5-2d67-4c03-be05-472c39a55be0"],
+Cell[6806, 156, 516, 7, 70, "Text",ExpressionUUID->"28c9026a-0264-4040-8e21-87103bea315d"],
+Cell[7325, 165, 180, 4, 70, "Input",ExpressionUUID->"7060aa56-b2dc-4af6-9c55-722bbd0a25a0"],
+Cell[7508, 171, 231, 4, 70, "Input",ExpressionUUID->"567bedb2-918e-49fa-81b3-873b809395e8"],
+Cell[7742, 177, 94, 0, 70, "Section",ExpressionUUID->"b58be951-9620-43e3-9f1b-30cbdcb9805f"],
+Cell[7839, 179, 390, 5, 70, "Text",ExpressionUUID->"8630c71b-34c7-41de-af1a-07ab681bfcc5"],
+Cell[8232, 186, 289, 5, 70, "Input",ExpressionUUID->"5a75e346-a4a8-4833-94ad-8f359fcb4604"],
+Cell[8524, 193, 92, 0, 70, "Section",ExpressionUUID->"9b1bfa50-2a31-4321-8d7d-e1d747dbef55"],
+Cell[8619, 195, 453, 6, 70, "Text",ExpressionUUID->"a8f3365d-cc8e-4e11-a318-bff59fcbbe28"],
+Cell[9075, 203, 182, 3, 70, "Input",ExpressionUUID->"f91ebe3e-b9c7-4703-8cc9-3eb7f609769b"],
+Cell[9260, 208, 107, 0, 70, "Input",ExpressionUUID->"aa8c79b3-7eed-4590-8204-3517061e1e01"],
+Cell[9370, 210, 170, 3, 70, "Input",ExpressionUUID->"f3fe5628-127c-458c-afc2-1ff7b9b90637"],
+Cell[9543, 215, 95, 0, 70, "Input",ExpressionUUID->"eeed39a1-d24b-4128-9eca-b84cc7a6ad87"]
+}
+]
+*)
+
+(* End of internal cache information *)
