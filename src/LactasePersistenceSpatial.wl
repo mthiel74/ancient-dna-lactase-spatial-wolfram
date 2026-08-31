@@ -134,15 +134,27 @@ FindFFmpeg[] := SelectFirst[
   Missing["NotFound"]
 ];
 
-ExportMP4FromGIF[gifFile_String, mp4File_String, frames_List] := Module[
-  {ffmpeg, exitCode, fallback},
+ExportMP4FromFrames[mp4File_String, frames_List, secondsPerFrame_: 0.7] := Module[
+  {ffmpeg, frameDir, exitCode, fallback},
   ffmpeg = FindFFmpeg[];
   If[! MissingQ[ffmpeg],
     If[FileExistsQ[mp4File], DeleteFile[mp4File]];
+    frameDir = CreateDirectory[];
+    MapIndexed[
+      Export[FileNameJoin[{frameDir, "frame_" <> IntegerString[First[#2], 10, 4] <> ".png"}], #1] &,
+      frames
+    ];
     exitCode = Quiet@RunProcess[
-      {ffmpeg, "-y", "-i", gifFile, "-movflags", "faststart", "-pix_fmt", "yuv420p", mp4File},
+      {ffmpeg, "-y",
+       "-framerate", ToString[N[1/secondsPerFrame]],
+       "-i", FileNameJoin[{frameDir, "frame_%04d.png"}],
+       "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30",
+       "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+       "-pix_fmt", "yuv420p", "-movflags", "faststart",
+       mp4File},
       "ExitCode"
     ];
+    Quiet@Check[DeleteDirectory[frameDir, DeleteContents -> True], Null];
     If[exitCode === 0 && FileExistsQ[mp4File], Return[mp4File]]
   ];
   fallback = Quiet@Check[Export[mp4File, frames, "FrameRate" -> 1], $Failed];
@@ -1027,10 +1039,10 @@ ExportSpatialVisualizations[root_String, samples_List, grid_List, posterior_List
   ];
   gifFile = FileNameJoin[{figDir, "lactase_persistence_spatial_posterior.gif"}];
   Export[gifFile, frames, "DisplayDurations" -> 0.7, AnimationRepetitions -> Infinity];
-  mp4File = ExportMP4FromGIF[
-    gifFile,
+  mp4File = ExportMP4FromFrames[
     FileNameJoin[{figDir, "lactase_persistence_spatial_posterior.mp4"}],
-    frames
+    frames,
+    0.7
   ];
   iCloudGIFFile = CopyVersionToICloud[gifFile, "lactase_persistence_spatial_posterior"];
   iCloudMP4File = If[StringQ[mp4File] && FileExistsQ[mp4File],
