@@ -14,6 +14,14 @@ Repository target: `mthiel74/ancient-dna-lactase-spatial-wolfram`
 
 *The calibrated dual-panel version: posterior mean (left) and 95% credible-interval width (right) at equal rank, 500-year steps. H.264 video: [lactase_persistence_spatial_posterior.mp4](figures/generated/lactase_persistence_spatial_posterior.mp4).*
 
+![Posterior density of the allele's origin](figures/generated/origin_posterior_density.png)
+
+*The point-source origin model, fitted with the same SMC-ABC: weighted posterior density of where the allele's rise began (star: weighted median, ~51.5N 12.6E; the 95% region spans most of Europe and comfortably includes the classic central-European/Carpathian origin of Itan et al. 2009 - the origin is honestly weakly identified from a handful of early heterozygotes).*
+
+![Origin spread animation](figures/generated/origin_spread.gif)
+
+*Forward simulation from the fitted origin: the travelling wave, 9600 BP to the present. H.264 video: [origin_spread.mp4](figures/generated/origin_spread.mp4).*
+
 ![Regional logistic reproduction with Wilson intervals](figures/generated/regional_logistic_reproduction.png)
 
 *Observed regional binned frequencies (points sized by called-allele count, 95% Wilson intervals) with fitted binomial logistic trajectories.*

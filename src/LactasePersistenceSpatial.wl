@@ -52,6 +52,11 @@ LogisticExplorer::usage = "LogisticExplorer[samples] returns a self-contained Ma
 DairyingCovariateExplorer::usage = "DairyingCovariateExplorer[] returns a Manipulate exploring the smooth dairying-onset covariate D(t).";
 SpatialTimeExplorer::usage = "SpatialTimeExplorer[samples, grid, posterior] returns a Manipulate stepping through posterior-mean maps with embedded frames.";
 
+RunOriginSMCABC::usage = "RunOriginSMCABC[samples, grid] fits the point-source origin model (origin latitude, longitude, time, injection frequency, plus selection and migration) with SMC-ABC.";
+LoadOrRunOriginSMCABC::usage = "LoadOrRunOriginSMCABC[root, samples, grid] reloads the stored origin-model posterior or fits and stores it.";
+OriginDensityMap::usage = "OriginDensityMap[smc] renders the Itan-style posterior density map of the allele's origin with the weighted median starred.";
+ExportOriginSpread::usage = "ExportOriginSpread[root, samples, grid, smc] renders the forward-simulated spread animation from the fitted origin (MP4 + GIF).";
+
 Begin["`Private`"];
 
 $GLADAncientGenotypesURL =
@@ -581,7 +586,8 @@ BuildNeighborList[grid_List, step_: 4] := Module[{positions, index},
   Table[
     DeleteMissing[
       Lookup[index, ({grid[[i, "Latitude"]] + #[[1]], grid[[i, "Longitude"]] + #[[2]]} & /@
-          {{step, 0}, {-step, 0}, {0, step}, {0, -step}}), Missing["NoNeighbor"]]
+          {{step, 0}, {-step, 0}, {0, step}, {0, -step},
+           {step, step}, {step, -step}, {-step, step}, {-step, -step}}), Missing["NoNeighbor"]]
     ],
     {i, Length[grid]}
   ]
@@ -609,34 +615,55 @@ InitialFrequencies[grid_List, params_Association] := Module[
 ];
 
 SpatialStep[freqs_List, grid_List, neighbors_List, params_Association, bp_?NumericQ, dtYears_?NumericQ] := Module[
-  {gens, sBase, sDairy, migration, dairy, multipliers, selection, movement},
+  {gens, sBase, sDairy, migration, dairy, multipliers, growth, grown, alphaMix, mixed},
   gens = dtYears/28.0;
   sBase = Lookup[params, "SelectionBase", 0.0];
   sDairy = Lookup[params, "SelectionDairying", 0.02];
   migration = Lookup[params, "Migration", 0.002];
   dairy = DairyCovariate[#, bp] & /@ grid[[All, "DairyingOnsetBP"]];
   multipliers = RegionSelectionMultiplier[params, #] & /@ grid[[All, "Region"]];
-  selection = gens (sBase + sDairy dairy multipliers) freqs (1 - freqs);
-  movement = gens migration Table[
-      If[neighbors[[i]] === {}, 0, Mean[freqs[[neighbors[[i]]]] - freqs[[i]]]],
-      {i, Length[freqs]}
-    ];
-  Clip[freqs + selection + movement, {0.000001, 0.999999}]
+  (* exact per-step logistic growth: stable and accurate for any s*gens *)
+  growth = Exp[gens (sBase + sDairy dairy multipliers)];
+  grown = freqs growth/(1. + freqs (growth - 1.));
+  (* exponential mixing toward the neighbour mean: stable for any m*gens *)
+  alphaMix = 1. - Exp[-gens migration];
+  mixed = Table[
+    If[neighbors[[i]] === {}, grown[[i]],
+      grown[[i]] + alphaMix (Mean[grown[[neighbors[[i]]]]] - grown[[i]])],
+    {i, Length[grown]}
+  ];
+  Clip[mixed, {0., 0.999999}]
 ];
 
 Options[SimulateSpatialTrajectory] = {"StartBP" -> 10000, "EndBP" -> 0, "TimeStepYears" -> 250};
 
 SimulateSpatialTrajectory[params_Association, grid_List, OptionsPattern[]] := Module[
-  {start, end, dt, times, neighbors, freqs, snapshots},
+  {start, end, dt, times, neighbors, freqs, snapshots, originMode, originBP,
+   originCell, injectFreq, injected},
   start = OptionValue["StartBP"];
   end = OptionValue["EndBP"];
   dt = OptionValue["TimeStepYears"];
   times = Range[start, end, -dt];
   neighbors = BuildNeighborList[grid, Lookup[First[grid], "StepDegrees", 4]];
-  freqs = InitialFrequencies[grid, params];
+  originMode = KeyExistsQ[params, "OriginTimeBP"];
+  If[originMode,
+    originBP = params["OriginTimeBP"];
+    injectFreq = Lookup[params, "InjectFrequency", 0.02];
+    originCell = First @ Nearest[
+      ({#["Latitude"], #["Longitude"]} & /@ grid) -> "Index",
+      {params["OriginLatitude"], params["OriginLongitude"]}];
+    freqs = ConstantArray[0., Length[grid]];
+    injected = False;
+    If[times[[1]] <= originBP,
+      freqs[[originCell]] = injectFreq; injected = True],
+    freqs = InitialFrequencies[grid, params]
+  ];
   snapshots = {freqs};
   Do[
     freqs = SpatialStep[freqs, grid, neighbors, params, times[[k]], dt];
+    If[originMode && ! injected && times[[k + 1]] <= originBP,
+      freqs[[originCell]] = Max[freqs[[originCell]], injectFreq];
+      injected = True];
     AppendTo[snapshots, freqs],
     {k, 1, Length[times] - 1}
   ];
@@ -698,12 +725,13 @@ PriorInSupportQ[vector_List, spec_: Automatic] := Module[{s},
   And @@ MapThread[#2[[1]] <= #1 <= #2[[2]] &, {vector, Values[s]}]
 ];
 
-ParamsFromVector[vector_List, spec_: Automatic] := Module[{s, assoc},
+ParamsFromVector[vector_List, spec_: Automatic] := Module[{s, assoc, logKeys},
   s = If[spec === Automatic, $PriorSpec, spec];
   assoc = AssociationThread[Keys[s], vector];
+  logKeys = Select[Keys[assoc], StringStartsQ[#, "Log10"] &];
   Join[
-    KeyDrop[assoc, "Log10InitialFrequency"],
-    <|"InitialFrequency" -> 10^assoc["Log10InitialFrequency"]|>
+    KeyDrop[assoc, logKeys],
+    Association @ Map[StringDrop[#, 5] -> 10^assoc[#] &, logKeys]
   ]
 ];
 
@@ -1287,14 +1315,16 @@ BuildObservationIndex[samples_List, grid_List] := Module[{coords, nf, sel},
 ];
 
 $GradientLateWindowBP = 4000;
+$GradientWindows = {{0, 4000}, {4800, 12000}};
 
-GradientPoolPositions[index_List] := Module[{latePos},
-  latePos = Select[Range[Length[index]], index[[#, "TimeBP"]] <= $GradientLateWindowBP &];
+GradientPoolPositions[index_List, window_: {0, 4000}] := Module[{pos},
+  pos = Select[Range[Length[index]],
+    window[[1]] < index[[#, "TimeBP"]] <= window[[2]] &];
   <|
-    "North" -> Select[latePos, index[[#, "Latitude"]] >= 52 &],
-    "South" -> Select[latePos, index[[#, "Latitude"]] < 46 &],
-    "West" -> Select[latePos, index[[#, "Longitude"]] < 5 &],
-    "East" -> Select[latePos, index[[#, "Longitude"]] >= 15 &]
+    "North" -> Select[pos, index[[#, "Latitude"]] >= 52 &],
+    "South" -> Select[pos, index[[#, "Latitude"]] < 46 &],
+    "West" -> Select[pos, index[[#, "Longitude"]] < 5 &],
+    "East" -> Select[pos, index[[#, "Longitude"]] >= 15 &]
   |>
 ];
 
@@ -1311,8 +1341,8 @@ PooledPredictedFrequency[index_List, positions_List, ps_List] := Module[{called}
   If[Total[called] <= 0, Missing["NoSamples"], N[Total[called ps[[positions]]]/Total[called]]]
 ];
 
-ObservedGradientStatistics[index_List] := Module[{pools, fN, fS, fW, fE, wNS, wWE},
-  pools = GradientPoolPositions[index];
+ObservedGradientStatistics[index_List, window_: {0, 4000}] := Module[{pools, fN, fS, fW, fE, wNS, wWE},
+  pools = GradientPoolPositions[index, window];
   fN = PooledFrequency[index, pools["North"]];
   fS = PooledFrequency[index, pools["South"]];
   fW = PooledFrequency[index, pools["West"]];
@@ -1339,39 +1369,41 @@ PredictedSampleProbabilities[trajectory_Association, index_List] := Module[{time
   ]
 ];
 
-ExtendedObservedData[samples_List, grid_List, binSize_: 1000] := Module[{binned, index, gradient},
+ExtendedObservedData[samples_List, grid_List, binSize_: 1000] := Module[{binned, index, gradients},
   binned = ObservedSummaries[samples, binSize];
   index = BuildObservationIndex[samples, grid];
-  gradient = ObservedGradientStatistics[index];
-  <|"Binned" -> binned, "Index" -> index, "Gradient" -> gradient|>
+  gradients = ObservedGradientStatistics[index, #] & /@ $GradientWindows;
+  <|"Binned" -> binned, "Index" -> index,
+    "Gradient" -> First[gradients], "Gradients" -> gradients|>
 ];
 
 ExtendedDistance[obsData_Association, trajectory_Association, grid_List] := Module[
-  {binned, predicted, binWeights, binDiffs, gradient, ps, pools, gNSpred, gWEpred,
-   gNSdiff, gWEdiff, wNS, wWE, num, den},
+  {binned, predicted, binWeights, binDiffs, gradients, ps, num, den},
   binned = obsData["Binned"];
   predicted = PredictedSummariesFromTrajectory[trajectory, grid, binned];
   binWeights = binned[[All, "CalledAlleles"]];
   binDiffs = binned[[All, "Frequency"]] - predicted[[All, "PredictedFrequency"]];
-  gradient = obsData["Gradient"];
-  pools = gradient["Pools"];
-  wNS = gradient["NorthSouthWeight"];
-  wWE = gradient["WestEastWeight"];
-  ps = If[wNS > 0 || wWE > 0, PredictedSampleProbabilities[trajectory, obsData["Index"]], {}];
-  gNSdiff = If[wNS > 0,
-    gNSpred = PooledPredictedFrequency[obsData["Index"], pools["North"], ps] -
-      PooledPredictedFrequency[obsData["Index"], pools["South"], ps];
-    gradient["NorthSouth"] - gNSpred,
-    0.
+  gradients = Lookup[obsData, "Gradients", {obsData["Gradient"]}];
+  ps = If[AnyTrue[gradients, #["NorthSouthWeight"] > 0 || #["WestEastWeight"] > 0 &],
+    PredictedSampleProbabilities[trajectory, obsData["Index"]], {}];
+  num = Total[binWeights binDiffs^2];
+  den = Total[binWeights];
+  Do[
+    Module[{pools = g["Pools"], wNS = g["NorthSouthWeight"], wWE = g["WestEastWeight"],
+      gNSdiff = 0., gWEdiff = 0.},
+      If[wNS > 0,
+        gNSdiff = g["NorthSouth"] -
+          (PooledPredictedFrequency[obsData["Index"], pools["North"], ps] -
+           PooledPredictedFrequency[obsData["Index"], pools["South"], ps])];
+      If[wWE > 0,
+        gWEdiff = g["WestEast"] -
+          (PooledPredictedFrequency[obsData["Index"], pools["West"], ps] -
+           PooledPredictedFrequency[obsData["Index"], pools["East"], ps])];
+      num += wNS gNSdiff^2 + wWE gWEdiff^2;
+      den += wNS + wWE;
+    ],
+    {g, gradients}
   ];
-  gWEdiff = If[wWE > 0,
-    gWEpred = PooledPredictedFrequency[obsData["Index"], pools["West"], ps] -
-      PooledPredictedFrequency[obsData["Index"], pools["East"], ps];
-    gradient["WestEast"] - gWEpred,
-    0.
-  ];
-  num = Total[binWeights binDiffs^2] + wNS gNSdiff^2 + wWE gWEdiff^2;
-  den = Total[binWeights] + wNS + wWE;
   Sqrt[num/den]
 ];
 
@@ -2021,6 +2053,160 @@ SpatialTimeExplorer[samples_List, grid_List, posterior_List, times_List: {}] := 
       SaveDefinitions -> False
     ]
   ]
+];
+
+
+(* ------------------------------------------------------------------ *)
+(* Point-source origin model: where and when did the allele start?    *)
+(* ------------------------------------------------------------------ *)
+
+$OriginPriorSpec = <|
+  "OriginLatitude" -> {36., 62.},
+  "OriginLongitude" -> {-10., 34.},
+  "OriginTimeBP" -> {6800., 9600.},
+  "Log10InjectFrequency" -> {-3., -1.},
+  "SelectionBase" -> {0.0, 0.015},
+  "SelectionDairying" -> {0.0, 0.06},
+  "Migration" -> {0.02, 0.6},
+  "SelectionMultiplierBritishIsles" -> {0.8, 2.2},
+  "SelectionMultiplierRhineDanube" -> {0.6, 1.8},
+  "SelectionMultiplierMediterranean" -> {0.4, 1.4},
+  "SelectionMultiplierBaltic" -> {0.8, 2.4}
+|>;
+
+Options[RunOriginSMCABC] = {"Particles" -> 400, "Generations" -> 5, "Seed" -> 19470}; 
+
+RunOriginSMCABC[samples_List, grid_List, OptionsPattern[]] := RunSMCABC[
+  samples, grid,
+  "Particles" -> OptionValue["Particles"],
+  "Generations" -> OptionValue["Generations"],
+  "Seed" -> OptionValue["Seed"],
+  "PriorSpec" -> $OriginPriorSpec
+];
+
+LoadOrRunOriginSMCABC[root_String, samples_List, grid_List, opts___] := Module[
+  {particlesFile, diagFile, rows, diag, spec, keys, vectors, weights, particles, obsData, smc},
+  particlesFile = FileNameJoin[{root, "data", "processed", "origin_smc_particles.csv"}];
+  diagFile = FileNameJoin[{root, "data", "processed", "origin_smc_diagnostics.csv"}];
+  If[! (FileExistsQ[particlesFile] && FileExistsQ[diagFile]),
+    smc = RunOriginSMCABC[samples, grid, opts];
+    ExportRows[particlesFile,
+      MapThread[Append[#1, "Weight" -> #2] &, {smc["Particles"], smc["Weights"]}]];
+    ExportRows[diagFile,
+      Table[<|"Generation" -> k, "Epsilon" -> smc["EpsilonHistory"][[k]],
+        "AcceptanceRate" -> smc["AcceptanceHistory"][[k]],
+        "ESS" -> If[k <= Length[smc["ESSHistory"]], smc["ESSHistory"][[k]], Missing["NotAvailable"]]|>,
+        {k, Length[smc["EpsilonHistory"]]}]];
+    Return[smc]
+  ];
+  rows = Map[Association, Normal[Import[particlesFile, "Dataset", HeaderLines -> 1]]];
+  diag = Map[Association, Normal[Import[diagFile, "Dataset", HeaderLines -> 1]]];
+  spec = $OriginPriorSpec;
+  keys = Keys[spec];
+  vectors = Map[
+    Function[row,
+      Table[
+        If[StringStartsQ[k, "Log10"], Log10[row[StringDrop[k, 5]]], row[k]],
+        {k, keys}
+      ]
+    ],
+    rows
+  ];
+  weights = Normalize[rows[[All, "Weight"]], Total];
+  particles = KeyDrop[#, "Weight"] & /@ rows;
+  obsData = ExtendedObservedData[samples, grid];
+  <|
+    "ParticleVectors" -> vectors, "Particles" -> particles, "Weights" -> weights,
+    "ParameterKeys" -> keys,
+    "EpsilonHistory" -> diag[[All, "Epsilon"]],
+    "AcceptanceHistory" -> diag[[All, "AcceptanceRate"]],
+    "ESSHistory" -> DeleteMissing[diag[[All, "ESS"]]],
+    "TotalSimulations" -> Missing["LoadedFromDisk"],
+    "GenerationShortfall" -> False,
+    "ObservedSummaries" -> obsData["Binned"],
+    "PriorSpecUsed" -> spec
+  |>
+];
+
+(* Itan-style origin posterior density map: weighted kernel density of the
+   posterior (origin longitude, latitude), rendered on the land-masked map
+   with the weighted-median origin starred. *)
+
+OriginDensityMap[smc_Association, opts___] := Module[
+  {draws, pts, dist, w, h, latC, lonC, matrix, maxd, colored, img, maskImg,
+   overlay, base, medLat, medLon, starImg, composed},
+  draws = ResamplePosterior[smc, 400];
+  pts = {#["OriginLongitude"], #["OriginLatitude"]} & /@ draws;
+  dist = SmoothKernelDistribution[pts, {1.6, 1.2}];
+  w = $MapPixelWidth; h = Round[w $MapAspect];
+  latC = Table[la, {la, $EuropeGeoRange[[1, 2]] - 0.25, $EuropeGeoRange[[1, 1]] + 0.25, -0.5}];
+  lonC = Table[lo, {lo, $EuropeGeoRange[[2, 1]] + 0.25, $EuropeGeoRange[[2, 2]] - 0.25, 0.5}];
+  matrix = Table[PDF[dist, {lo, la}], {la, latC}, {lo, lonC}];
+  maxd = Max[matrix];
+  colored = Map[
+    List @@ ColorConvert[
+      Blend[{RGBColor[1, 1, 1], RGBColor[1.0, 0.85, 0.2], RGBColor[0.95, 0.45, 0.05],
+        RGBColor[0.75, 0.05, 0.05]}, Clip[#/maxd, {0, 1}]^0.7], "RGB"] &,
+    matrix, {2}];
+  img = ImageResize[Image[colored], {w, h}];
+  maskImg = LandMaskImage[w, h];
+  overlay = SetAlphaChannel[img,
+    ImageMultiply[maskImg,
+      ImageResize[Image[Map[0.85 Clip[#/maxd, {0, 1}]^0.5 &, matrix, {2}]], {w, h}]]];
+  base = BaseMapRaster[w];
+  composed = ImageCompose[base, overlay];
+  medLat = WeightedQuantile[smc["ParticleVectors"][[All, 1]], smc["Weights"], 0.5];
+  medLon = WeightedQuantile[smc["ParticleVectors"][[All, 2]], smc["Weights"], 0.5];
+  starImg = Rasterize[
+    Graphics[{EdgeForm[Directive[Black, AbsoluteThickness[1.2]]], White,
+      Polygon[Table[(1 - 0.6 Mod[k, 2]) {Sin[k Pi/5], Cos[k Pi/5]}, {k, 0, 9}]]},
+      Background -> None, ImageSize -> 34], "Image", Background -> None];
+  composed = ImageCompose[composed, starImg,
+    {(medLon - $EuropeGeoRange[[2, 1]])/($EuropeGeoRange[[2, 2]] - $EuropeGeoRange[[2, 1]]) w,
+     (medLat - $EuropeGeoRange[[1, 1]])/($EuropeGeoRange[[1, 2]] - $EuropeGeoRange[[1, 1]]) h}];
+  Framed[
+    Labeled[Image[composed, ImageSize -> 640],
+      Style["Posterior density of the allele's origin (star: weighted median)", 13, Bold, Black], Top],
+    Background -> White, FrameStyle -> None, FrameMargins -> 4]
+];
+
+(* Spread video from the fitted origin: posterior-mean field over origin
+   draws, hero-style frames with the median origin starred. *)
+
+ExportOriginSpread[root_String, samples_List, grid_List, smc_Association, OptionsPattern[]] := Module[
+  {figDir, draws, knotTimes, stats, support, frameTimes, w, h, frames,
+   medLat, medLon, starImg, gifFrames, mp4File, gifFile, iCloudMP4, iCloudGIF, startBP},
+  figDir = FileNameJoin[{root, "figures", "generated"}];
+  draws = ResamplePosterior[smc, 100];
+  startBP = 9600;
+  knotTimes = Range[startBP, 0, -200];
+  stats = AugmentedCellStats[draws, grid, knotTimes];
+  support = KrigingSurfaceSupport[grid];
+  w = 1280; h = Round[w $MapAspect];
+  medLat = WeightedQuantile[smc["ParticleVectors"][[All, 1]], smc["Weights"], 0.5];
+  medLon = WeightedQuantile[smc["ParticleVectors"][[All, 2]], smc["Weights"], 0.5];
+  starImg = Rasterize[
+    Graphics[{EdgeForm[Directive[Black, AbsoluteThickness[1.4]]], White,
+      Polygon[Table[(1 - 0.6 Mod[k, 2]) {Sin[k Pi/5], Cos[k Pi/5]}, {k, 0, 9}]]},
+      Background -> None, ImageSize -> 40], "Image", Background -> None];
+  frameTimes = Range[startBP, 0, -100];
+  frames = Table[
+    Module[{fr = HeroFrame[t, stats, knotTimes, support, samples, w, h]},
+      ImageCompose[fr, starImg,
+        {(medLon - $EuropeGeoRange[[2, 1]])/($EuropeGeoRange[[2, 2]] - $EuropeGeoRange[[2, 1]]) w,
+         (medLat - $EuropeGeoRange[[1, 1]])/($EuropeGeoRange[[1, 2]] - $EuropeGeoRange[[1, 1]]) h}]
+    ],
+    {t, frameTimes}];
+  frames = Join[frames, ConstantArray[Last[frames], 10]];
+  mp4File = FileNameJoin[{figDir, "origin_spread.mp4"}];
+  ExportMP4FromFrames[mp4File, frames, 0.11];
+  gifFrames = ImageResize[#, 720] & /@ frames[[1 ;; ;; 2]];
+  gifFile = FileNameJoin[{figDir, "origin_spread.gif"}];
+  Export[gifFile, gifFrames, "DisplayDurations" -> 0.22, AnimationRepetitions -> Infinity];
+  iCloudMP4 = CopyVersionToICloud[mp4File, "origin_spread"];
+  iCloudGIF = CopyVersionToICloud[gifFile, "origin_spread"];
+  <|"OriginSpreadMP4" -> mp4File, "OriginSpreadGIF" -> gifFile,
+    "ICloudOriginMP4" -> iCloudMP4, "ICloudOriginGIF" -> iCloudGIF|>
 ];
 
 End[];

@@ -75,6 +75,16 @@ If[runSensitivity =!= 0,
   sensitivityOutputs = LactasePersistenceSpatial`ExportSensitivityOutputs[root, sensitivityRows];
 ];
 
+Print["Fitting point-source origin model (or loading cached posterior)..."];
+originSmc = LactasePersistenceSpatial`LoadOrRunOriginSMCABC[root, samples, grid];
+originQuantiles = LactasePersistenceSpatial`PosteriorParameterQuantiles[originSmc];
+LactasePersistenceSpatial`Private`ExportRows[
+  FileNameJoin[{root, "data", "processed", "origin_posterior_quantiles.csv"}], originQuantiles];
+Export[FileNameJoin[{root, "figures", "generated", "origin_posterior_density.png"}],
+  LactasePersistenceSpatial`OriginDensityMap[originSmc], ImageResolution -> 160];
+Print["Rendering origin spread animation..."];
+LactasePersistenceSpatial`ExportOriginSpread[root, samples, grid, originSmc];
+
 Print["Rendering spatial maps and calibrated uncertainty animation..."];
 spatialOutputs = LactasePersistenceSpatial`ExportSpatialVisualizations[root, samples, grid, draws];
 
