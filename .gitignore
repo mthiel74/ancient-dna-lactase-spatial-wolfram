@@ -1,0 +1,9 @@
+.DS_Store
+*.mx
+*.nbp
+*.wxf
+*.log
+*.tmp
+figures/generated/
+data/processed/*.cache
+
