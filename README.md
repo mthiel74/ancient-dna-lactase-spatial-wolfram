@@ -30,6 +30,10 @@ Run from the repository root:
 
 For a faster smoke run, lower `--simulations`, `--retain`, and `--cv-simulations`.
 
+## Continuous Integration Note
+
+GitHub Actions is configured for non-interactive Wolfram tests. The workflow requires a repository secret named `WOLFRAMSCRIPT_ENTITLEMENTID` so the GitHub runner can install and authorize Wolfram Engine. Without that secret, the workflow fails before running tests rather than pretending the Wolfram test suite passed.
+
 ## Generated Outputs
 
 The pipeline writes:
