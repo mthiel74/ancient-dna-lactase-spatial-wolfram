@@ -4,6 +4,4 @@
 *.wxf
 *.log
 *.tmp
-figures/generated/
 data/processed/*.cache
-

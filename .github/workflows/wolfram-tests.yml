@@ -1,0 +1,32 @@
+name: Wolfram Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  wolfram-tests:
+    runs-on: ubuntu-latest
+    env:
+      WOLFRAMSCRIPT_ENTITLEMENTID: ${{ secrets.WOLFRAMSCRIPT_ENTITLEMENTID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Require Wolfram entitlement secret
+        run: |
+          if [ -z "${WOLFRAMSCRIPT_ENTITLEMENTID}" ]; then
+            echo "::error::Set the WOLFRAMSCRIPT_ENTITLEMENTID repository secret to run non-interactive Wolfram tests."
+            exit 1
+          fi
+
+      - name: Run MUnit tests in Wolfram Engine
+        run: |
+          docker run --rm \
+            -e WOLFRAMSCRIPT_ENTITLEMENTID="${WOLFRAMSCRIPT_ENTITLEMENTID}" \
+            -v "$PWD:/work" \
+            -w /work \
+            wolframresearch/wolframengine:latest \
+            wolframscript -entitlement "${WOLFRAMSCRIPT_ENTITLEMENTID}" -file scripts/run_tests.wls
+

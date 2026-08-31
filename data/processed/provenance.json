@@ -1,0 +1,11 @@
+{
+	"created_at":"2026-08-31T17:40:23",
+	"raw_file":"glad_adna_15-8-22.xlsx",
+	"raw_sha256":"1adc0acd81e1fed8d8a906b20b8d1f517fffc5a38790ce8c973babab0602b0fb",
+	"parser":"LactasePersistenceSpatial` ParseGLADWorkbook",
+	"source_url":"https:\/\/www.ucl.ac.uk\/biosciences\/sites\/biosciences\/files\/glad_adna_15-8-22.xlsx",
+	"total_rows":2999,
+	"called_rows_with_age_location":1785,
+	"time_bin_years":1000,
+	"region_assignment":"Coarse country and latitude\/longitude heuristic matching Evershed et al. four-region framing."
+}

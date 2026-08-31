@@ -4,6 +4,49 @@ Extended Markdown specification for a Wolfram Language project that moves from r
 
 Repository target: `mthiel74/ancient-dna-lactase-spatial-wolfram`
 
+## Current Executable Baseline
+
+This repository now contains a runnable Wolfram Language baseline for the full workflow:
+
+- retrieve the public GLAD ancient `rs4988235` workbook derived from AADR v44.3
+- normalize sample age, location, region, and genotype calls
+- fit regional published-style logistic trajectories
+- run a coarse Europe grid diffusion/selection spatial model
+- fit the spatial model with rejection ABC
+- generate posterior predictive checks, held-out-region validation, kriged geographic maps, GIF animation, and MP4 video
+- copy every generated animation/video version to Marco's iCloud Codex folder with timestamped filenames
+
+The automated data source is the public GLAD LP Ancient Genotypes 2022 workbook used for the Evershed et al. 2022 lactase-persistence analysis. The original request named Allentoft et al. 2022; this implementation targets the public lactase-persistence genotype source that exposes the required `rs4988235` calls, ages, and coordinates.
+
+## Quick Start
+
+Run from the repository root:
+
+```bash
+/usr/local/bin/wolframscript -file scripts/retrieve_data.wls
+/usr/local/bin/wolframscript -file scripts/run_pipeline.wls --simulations 300 --retain 50 --cv-simulations 100
+/usr/local/bin/wolframscript -file scripts/run_tests.wls
+```
+
+For a faster smoke run, lower `--simulations`, `--retain`, and `--cv-simulations`.
+
+## Generated Outputs
+
+The pipeline writes:
+
+- raw immutable workbook and manifest under `data/raw/`
+- processed sample tables, regional bins, posterior draws, posterior predictive checks, and cross-validation results under `data/processed/`
+- regional reproduction, ABC posterior, posterior predictive, kriged spatial mean, kriged spatial uncertainty, GIF, and MP4 artifacts under `figures/generated/`
+- run notes under `docs/run-summary.md`
+
+Spatial maps are rendered as geographic objects with `GeoGraphics`, `GeoPosition`, and `GeoBackground -> "CountryBorders"`. The inferred model remains the coarse adjacency grid; ordinary kriging is used only as the display layer to make the geographic surface readable without claiming finer inferential resolution.
+
+Animation outputs:
+
+- repository GIF: `figures/generated/lactase_persistence_spatial_posterior.gif`
+- repository MP4: `figures/generated/lactase_persistence_spatial_posterior.mp4`
+- timestamped iCloud copies: `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Codex/YYYY-MM-DD_HHMMSS_lactase_persistence_spatial_posterior.{gif,mp4}`
+
 ## Project Goals
 
 Build an end-to-end Wolfram Language pipeline for the evolution of lactase persistence in ancient European DNA:
@@ -165,6 +208,8 @@ Use Wolfram Language visualization tools throughout.
 Required tools:
 
 - `GeoGraphics` for spatial maps and sample locations.
+- `GeoListPlot` for exploratory sample-location checks where useful.
+- Ordinary kriging for the exported geographic display surface, with the coarse grid retained as the inferential unit.
 - `ListAnimate` or exported animation frames for temporal dynamics.
 - Standard plotting functions for regional reproduction and diagnostics.
 
@@ -276,4 +321,3 @@ The project is done when:
 - a calibrated animation is generated with uncertainty explicitly shown
 - Wolfram Language tests pass locally and in GitHub Actions
 - the Wolfram Community narrative post and downloadable notebooks are ready
-

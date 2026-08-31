@@ -1,0 +1,49 @@
+"Region","TimeBinStartBP","TimeBinMidBP","CalledAlleles","DerivedAlleles","Frequency","SampleCount"
+"Baltic",0,500,1,0,0,1
+"Baltic",1000,1500,2,1,0.5,1
+"Baltic",2000,2500,2,1,0.5,2
+"Baltic",3000,3500,4,0,0,3
+"Baltic",4000,4500,22,3,0.13636363636363635,16
+"Baltic",5000,5500,12,0,0,7
+"Baltic",6000,6500,9,0,0,5
+"Baltic",7000,7500,34,0,0,19
+"Baltic",8000,8500,2,0,0,1
+"Baltic",9000,9500,2,0,0,1
+"British Isles",2000,2500,5,2,0.4,3
+"British Isles",3000,3500,77,5,0.06493506493506493,41
+"British Isles",4000,4500,68,1,0.014705882352941176,38
+"British Isles",5000,5500,135,1,0.007407407407407408,79
+"British Isles",6000,6500,19,0,0,10
+"Mediterranean",0,500,52,11,0.21153846153846154,31
+"Mediterranean",1000,1500,116,9,0.07758620689655173,75
+"Mediterranean",2000,2500,61,4,0.06557377049180328,37
+"Mediterranean",3000,3500,125,2,0.016,70
+"Mediterranean",4000,4500,177,1,0.005649717514124294,100
+"Mediterranean",5000,5500,76,0,0,44
+"Mediterranean",6000,6500,60,1,0.016666666666666666,33
+"Mediterranean",7000,7500,74,0,0,44
+"Mediterranean",8000,8500,68,0,0,36
+"Mediterranean",9000,9500,10,0,0,6
+"Mediterranean",10000,10500,12,0,0,6
+"Mediterranean",11000,11500,3,0,0,2
+"Mediterranean",13000,13500,1,0,0,1
+"Mediterranean",24000,24500,2,0,0,1
+"Other Europe",0,500,1,0,0,1
+"Other Europe",2000,2500,16,2,0.125,12
+"Other Europe",3000,3500,3,0,0,2
+"Other Europe",4000,4500,24,0,0,13
+"Other Europe",5000,5500,19,0,0,12
+"Other Europe",6000,6500,4,0,0,2
+"Other Europe",7000,7500,9,0,0,6
+"Other Europe",8000,8500,3,0,0,2
+"Rhine-Danube",1000,1500,1,0,0,1
+"Rhine-Danube",2000,2500,10,2,0.2,8
+"Rhine-Danube",3000,3500,52,2,0.038461538461538464,29
+"Rhine-Danube",4000,4500,233,11,0.04721030042918455,133
+"Rhine-Danube",5000,5500,57,1,0.017543859649122806,32
+"Rhine-Danube",6000,6500,122,0,0,67
+"Rhine-Danube",7000,7500,101,0,0,62
+"Rhine-Danube",8000,8500,6,0,0,3
+"Rhine-Danube",9000,9500,5,0,0,4
+"Rhine-Danube",10000,10500,2,0,0,1
+"Rhine-Danube",14000,14500,2,0,0,1

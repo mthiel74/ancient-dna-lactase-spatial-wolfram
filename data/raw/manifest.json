@@ -1,0 +1,13 @@
+{
+	"dataset":"GLAD LP Ancient Genotypes 2022",
+	"description":"Ancient rs4988235 genotype workbook derived from AADR v44.3 and used for Evershed et al. 2022.",
+	"source_url":"https:\/\/www.ucl.ac.uk\/biosciences\/sites\/biosciences\/files\/glad_adna_15-8-22.xlsx",
+	"downloaded_this_run":false,
+	"retrieved_at":"2026-08-31T17:40:22",
+	"raw_file":"glad_adna_15-8-22.xlsx",
+	"sha256":"1adc0acd81e1fed8d8a906b20b8d1f517fffc5a38790ce8c973babab0602b0fb",
+	"bytes":426953,
+	"read_only":true,
+	"primary_reference":"Evershed et al. 2022, Nature, Dairying, diseases and the evolution of lactase persistence in Europe",
+	"aadr_reference":"Allen Ancient DNA Resource v44.3"
+}
