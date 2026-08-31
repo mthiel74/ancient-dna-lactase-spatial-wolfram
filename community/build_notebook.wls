@@ -32,6 +32,16 @@ outPdf   = FileNameJoin[{repoRoot, "community", "ancient_dna_lactase_persistence
 Print["Loading package and pipeline outputs..."];
 Get[FileNameJoin[{repoRoot, "src", "LactasePersistenceSpatial.wl"}]];
 
+(* keep a copy of the package beside the notebook: on Wolfram Community the
+   reader downloads the .nb and the .wl into one folder, and the setup cell
+   below finds the package there. *)
+Quiet @ Check[
+  CopyFile[
+    FileNameJoin[{repoRoot, "src", "LactasePersistenceSpatial.wl"}],
+    FileNameJoin[{repoRoot, "community", "LactasePersistenceSpatial.wl"}],
+    OverwriteTarget -> True],
+  Null];
+
 SetDirectory[repoRoot];
 samples = LoadProcessedSamples[repoRoot];
 grid = BuildEuropeGrid[];
@@ -115,35 +125,44 @@ codeIn[code_String] := Cell[code, "Program",
 
 wlIn[code_String] := Cell[code, "Input"];
 
-rasterOut[g_] := Cell[BoxData[ToBoxes[
-    Rasterize[g, "Image", ImageResolution -> 110]]], "Output",
-  ShowCellLabel -> False, TextAlignment -> Center];
+(* Every evalIn cell is EVALUATED here, in this wolframscript kernel, in
+   notebook order; the genuine typeset result is embedded as its Output
+   cell with matching In[n]:=/Out[n]= labels. Graphics are rasterized;
+   tables and Manipulates keep live boxes (Manipulates carry their data,
+   so they work in any downloaded copy). *)
 
-boxOut[e_] := Cell[BoxData[ToBoxes[e]], "Output", ShowCellLabel -> False];
-
-liveOut[e_] := Cell[BoxData[ToBoxes[e]], "Output", ShowCellLabel -> False];
+$cellCounter = 0;
 
 graphicalQ[e_] := MatchQ[e,
   _Graphics | _Legended | _Framed | _Image | _Labeled | _GraphicsGrid |
   _GraphicsRow | _GeoGraphics | _Graphics3D];
 
-evalIn[code_String] := Module[{res},
-  Print["  evaluating: ", StringTake[StringReplace[code, "\n" -> " "], UpTo[70]]];
+evalIn[code_String] := Module[{res, n, inCell, outCell},
+  $cellCounter++; n = $cellCounter;
+  Print["  In[", n, "]: ", StringTake[StringReplace[code, "\n" -> " "], UpTo[64]]];
   res = ToExpression[code];
-  Cell[CellGroupData[{
-    Cell[code, "Input"],
-    Which[
-      MatchQ[res, _Manipulate], liveOut[res],
-      graphicalQ[res], rasterOut[res],
-      True, boxOut[res]
-    ]
-  }, Open]]
+  inCell = Cell[code, "Input", CellLabel -> "In[" <> ToString[n] <> "]:="];
+  If[res === Null, Return[inCell]];
+  outCell = Which[
+    MatchQ[res, _Manipulate],
+      Cell[BoxData[ToBoxes[res]], "Output",
+        CellLabel -> "Out[" <> ToString[n] <> "]="],
+    graphicalQ[res],
+      Cell[BoxData[ToBoxes[Rasterize[res, "Image", ImageResolution -> 110]]],
+        "Output", CellLabel -> "Out[" <> ToString[n] <> "]=",
+        TextAlignment -> Center],
+    True,
+      Cell[BoxData[ToBoxes[res]], "Output",
+        CellLabel -> "Out[" <> ToString[n] <> "]="]
+  ];
+  Cell[CellGroupData[{inCell, outCell}, Open]]
 ];
 
-evalInSilent[code_String] := Module[{res},
-  Print["  evaluating (no output): ", StringTake[StringReplace[code, "\n" -> " "], UpTo[70]]];
-  res = ToExpression[code];
-  Cell[code, "Input"]
+(* setup cell: shown with its label but not executed at build time (the
+   builder has already anchored the directory and loaded the package). *)
+evalInSilent[code_String] := Module[{n},
+  $cellCounter++; n = $cellCounter;
+  Cell[code, "Input", CellLabel -> "In[" <> ToString[n] <> "]:="]
 ];
 
 imgFileCell[path_String, width_: 640] := If[FileExistsQ[path],
@@ -191,6 +210,8 @@ aiNote[fig_String] := Cell[TextData[{
 $allCells = {};
 writeAll[cs_List] := ($allCells = Join[$allCells, DeleteCases[cs, Null]];
   Print["  writeAll: total = ", Length[$allCells]];);
+
+
 
 (* ================= TITLE, HERO, INTRODUCTION ================= *)
 
@@ -247,15 +268,18 @@ simulation and two kinds of held-out validation, stress-test the priors, and \
 render the posterior \[LongDash] mean ", ital["and"], " credible-interval \
 width \[LongDash] as the animation above. Every figure sits directly below \
 the code that makes it, and the whole thing reruns from two wolframscript \
-commands (\[Section]12)."}],
+commands (\[Section]13)."}],
 
 para[{"All the heavy lifting lives in the companion package ",
   mono["LactasePersistenceSpatial.wl"], " \[LongDash] the only file you need \
 beside this notebook (plus an internet connection for the first data \
-download). The outputs shown are pre-computed so the post opens instantly, \
-but every cell is genuinely evaluatable: the expensive SMC posterior reloads \
-from the repository's result tables when present and refits from scratch when \
-not."}]
+download). Put the two files in one folder and evaluate: the setup cell finds \
+the package next to the notebook (or in ", mono["src/"], " when you are \
+inside the cloned repository), the data download and every output re-create \
+themselves relative to that folder, and the expensive SMC posterior reloads \
+from stored result tables when present and refits from scratch when not. \
+Every output you see below was produced by running this notebook top to \
+bottom with wolframscript."}]
 
 }];
 
@@ -273,7 +297,7 @@ and a provenance manifest, and marks the file read-only; ",
   mono["WriteProcessedData"], " parses, cleans, and writes tidy CSVs with \
 provenance attached."}],
 
-evalInSilent["Get[FileNameJoin[{Directory[], \"src\", \"LactasePersistenceSpatial.wl\"}]];"],
+evalInSilent["nbdir = NotebookDirectory[];\nroot = If[FileExistsQ[FileNameJoin[{ParentDirectory[nbdir], \"src\", \"LactasePersistenceSpatial.wl\"}]],\n   ParentDirectory[nbdir], nbdir];\nSetDirectory[root];\nGet[First[Select[\n   {FileNameJoin[{root, \"src\", \"LactasePersistenceSpatial.wl\"}],\n    FileNameJoin[{nbdir, \"LactasePersistenceSpatial.wl\"}]}, FileExistsQ]]];"],
 
 evalIn["raw = RetrieveRawData[Directory[]];\nprocessed = WriteProcessedData[Directory[], raw];\nsamples = processed[\"CalledSamples\"];\nLength[samples]"],
 
@@ -410,14 +434,30 @@ inverse-distance interpolation from six regional anchor dates (Mediterranean \
 ~8200 BP through Baltic ~5600 BP) rather than four flat plateaus, so the \
 covariate has genuine spatial texture. Per-region multipliers m let the north \
 run hotter than the south, and the migration term exchanges frequency with \
-adjacent land cells. The covariate's shape is worth ten seconds of \
-interaction too:"}],
+adjacent land cells. Here is the model's actual geography \[LongDash] the \
+land cells it evolves on, coloured by when dairying arrives in each:"}],
+
+evalIn["grid = BuildEuropeGrid[];\nLength[grid]"],
+
+evalIn["Legended[\n GeoGraphics[\n  Flatten@Table[\n    {GeoStyling[Opacity[0.75,\n       ColorData[\"TemperatureMap\"][Rescale[c[\"DairyingOnsetBP\"], {5400, 8500}]]]],\n     EdgeForm[Directive[White, Opacity[0.6], AbsoluteThickness[0.3]]],\n     GeoPolygon[{{c[\"Latitude\"] - 1, c[\"Longitude\"] - 1}, {c[\"Latitude\"] - 1, c[\"Longitude\"] + 1},\n       {c[\"Latitude\"] + 1, c[\"Longitude\"] + 1}, {c[\"Latitude\"] + 1, c[\"Longitude\"] - 1}}]},\n    {c, grid}],\n  GeoRange -> {{34, 63}, {-12, 36}}, GeoProjection -> \"Equirectangular\",\n  GeoBackground -> GeoStyling[{\"CountryBorders\",\n    \"Land\" -> GrayLevel[0.985], \"Ocean\" -> RGBColor[0.82, 0.89, 0.95]}],\n  ImageSize -> 640],\n BarLegend[{(ColorData[\"TemperatureMap\"][Rescale[#, {5400, 8500}]] &), {5400, 8500}},\n  LegendLabel -> \"dairying onset (years BP)\"]]"],
+
+captionCell["The model's spatial skeleton: the 2\[Degree] land cells \
+(sea cells are removed by an elevation test, so diffusion respects \
+coastlines \[LongDash] Britain stays connected across the Dover cells, \
+Ireland is an island in the adjacency too), coloured by the smooth \
+dairying-onset field. Red is early dairying (Mediterranean and the \
+southeast, ~8,200 BP), blue is late (the Baltic, ~5,600 BP). This field is \
+what the sDairy component of selection switches on, cell by cell, as the \
+simulation runs."],
+
+para[{"The covariate's shape in time is worth ten seconds of interaction \
+too:"}],
 
 evalIn["DairyingCovariateExplorer[]"],
 
 para[{"One forward simulation of this model costs about 70 ms:"}],
 
-evalIn["grid = BuildEuropeGrid[];\nAbsoluteTiming[\n  SimulateSpatialTrajectory[\n   <|\"InitialFrequency\" -> 0.003, \"SelectionBase\" -> 0.002,\n     \"SelectionDairying\" -> 0.02, \"Migration\" -> 0.003|>, grid];\n ][[1]]"],
+evalIn["AbsoluteTiming[\n  SimulateSpatialTrajectory[\n   <|\"InitialFrequency\" -> 0.003, \"SelectionBase\" -> 0.002,\n     \"SelectionDairying\" -> 0.02, \"Migration\" -> 0.003|>, grid];\n ][[1]]"],
 
 para[{"\[LongDash] and that number is the entire strategy. When a simulator \
 is this cheap, you do not need to linearize, approximate, or hand-wave the \
@@ -610,11 +650,58 @@ evalIn["Import[FileNameJoin[{Directory[], \"figures\", \"generated\", \"sensitiv
 
 }];
 
-(* ================= 10-13. CLOSING ================= *)
+(* ================= 10. ORIGIN ================= *)
 
 writeAll[{
 
-hd1["10.  The animation, assembled"],
+hd1["10.  Where did the allele come from? Origin versus selection"],
+
+para[{"Everything so far answers \"where did selection push hardest?\" \
+\[LongDash] which is a different question from \"where did the allele \
+come from?\", and the two are easy to conflate when watching the \
+animation. The classic origin estimate is ", bold["Itan et al. (2009)"],
+", whose demic coevolution simulations placed the start of the \
+lactase-persistence/dairying story around 7,500 years ago in the zone \
+between the central Balkans and central Europe \[LongDash] roughly the \
+Linearbandkeramik world of modern Hungary, Slovakia, and Austria. What do \
+the ancient genotypes in this dataset say about first appearances?"}],
+
+evalIn["earliest = TakeLargestBy[Select[samples, #[\"DerivedAlleles\"] > 0 &], #[\"MeanDateBP\"] &, 8];\nGrid[\n Prepend[\n  {Round[#[\"MeanDateBP\"]], #[\"Country\"], #[\"Latitude\"], #[\"Longitude\"],\n    #[\"RS4988235Genotype\"], #[\"Publication\"]} & /@ earliest,\n  Style[#, Bold] & /@ {\"years BP\", \"country\", \"lat\", \"lon\", \"call\", \"publication\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+
+evalIn["GeoGraphics[\n Flatten[Table[{RGBColor[0.8, 0.15, 0.1], PointSize[0.013],\n    Point[GeoPosition[{e[\"Latitude\"], e[\"Longitude\"]}]],\n    Black, Text[Style[ToString[Round[e[\"MeanDateBP\"]]] <> \" BP\", 9.5, Bold],\n      GeoPosition[{e[\"Latitude\"] + 1.1, e[\"Longitude\"]}]]},\n   {e, earliest}], 1],\n GeoRange -> {{34, 63}, {-14, 72}}, GeoProjection -> \"Equirectangular\",\n GeoBackground -> GeoStyling[{\"CountryBorders\",\n   \"Land\" -> GrayLevel[0.97], \"Ocean\" -> RGBColor[0.85, 0.9, 0.95]}],\n ImageSize -> 640]"],
+
+captionCell["The eight oldest derived-allele carriers in the dataset. The \
+earliest observations cluster in the southeast \[LongDash] Bulgaria ~6560 \
+BP, Ukraine ~5600 BP, Romania ~5390 BP \[LongDash] before Ireland, Iberia, \
+Britain, and Hungary appear around 5100\[Dash]4270 BP. Each is a single \
+heterozygote, so each is individually weak evidence, and sampling is far \
+from spatially uniform \[LongDash] but the pattern is at least compatible \
+with a central/southeastern European origin of the kind Itan et al. \
+proposed."],
+
+para[{"The animation cannot show any of this, ", ital["by construction"],
+". The model starts at 10,000 BP with a near-uniform initial frequency \
+(posterior median p0 \[TildeTilde] 0.001 everywhere, with only mild linear \
+gradients); there is no mutation event and no travelling wave from a point \
+source. And because migration turned out to be weakly identified \
+(\[Section]9), virtually all the motion you see is ", ital["in-place \
+logistic growth"], " at regionally varying rates \[LongDash] Britain and \
+the Baltic light up first because their late samples demand the fastest \
+growth, not because the allele originated there. Getting the origin ",
+ital["into"], " the model is the most interesting extension on the list: \
+replace the uniform initial condition with a point source (three extra \
+parameters \[LongDash] origin latitude, longitude, and start time) and \
+let the same SMC machinery estimate where and when the wave began. Then \
+the Hungary hypothesis becomes a testable posterior statement rather than \
+a caption."}]
+
+}];
+
+(* ================= 11-14. CLOSING ================= *)
+
+writeAll[{
+
+hd1["11.  The animation, assembled"],
 
 para[{"The hero animation at the top of the post is the whole pipeline in \
 one artifact: 81 time-interpolated frames of the kriged posterior mean, the \
@@ -626,7 +713,7 @@ base map, the full render takes under a minute:"}],
 
 codeIn["hero = ExportHeroAnimation[Directory[], samples, grid, draws];\n(* figures/generated/hero_lactase_persistence.{mp4, gif} *)"],
 
-hd1["11.  What this is not"],
+hd1["12.  What this is not"],
 
 para[{"This is a calibrated caricature, and the caveats are part of the \
 result. The regional logistic layer reproduces the published four-region \
@@ -636,11 +723,12 @@ posterior's tightness; demography (the steppe migrations!) is implicit; \
 Ireland is unreachable in the adjacency; radiocarbon uncertainty enters the \
 bins as point dates; the final ESS of " <> fmt[essLast, 1] <> " keeps every \
 interval approximate; and everything after ~2,000 BP extrapolates beyond \
-the data. Next steps, in rough order of value: a Wright\[Dash]Fisher \
-stochastic core, sample-level ancestry-aware likelihoods, MCMC rejuvenation \
-inside the SMC, and calibrated-date uncertainty propagated end-to-end."}],
+the data. Next steps, in rough order of value: a point-source origin model \
+(\[Section]10), a Wright\[Dash]Fisher stochastic core, sample-level \
+ancestry-aware likelihoods, MCMC rejuvenation inside the SMC, and \
+calibrated-date uncertainty propagated end-to-end."}],
 
-hd1["12.  Reproducibility"],
+hd1["13.  Reproducibility"],
 
 para[{"Everything \[LongDash] data retrieval with checksums, processing \
 with provenance, fits, SMC, validation, sensitivity, every figure, the \
@@ -657,7 +745,7 @@ non-interactively. Repository: ",
   link["mthiel74/ancient-dna-lactase-spatial-wolfram",
     "https://github.com/mthiel74/ancient-dna-lactase-spatial-wolfram"], "."}],
 
-hd1["13.  References"],
+hd1["14.  References"],
 
 para[{"Evershed, R. P., et al. (2022). Dairying, diseases and the evolution \
 of lactase persistence in Europe. ", ital["Nature"], " 608, 336\[Dash]345. ",
@@ -669,6 +757,10 @@ Bronze Age Europe indicates ongoing strong selection over the last 3,000 \
 years. ", ital["Current Biology"], " 30(21), 4307\[Dash]4315. ",
   link["cell.com/current-biology",
     "https://www.cell.com/current-biology/fulltext/S0960-9822(20)31187-8"]}],
+
+para[{"Itan, Y., Powell, A., Beaumont, M. A., Burger, J., Thomas, M. G. \
+(2009). The origins of lactase persistence in Europe. ",
+  ital["PLoS Computational Biology"], " 5(8), e1000491."}],
 
 para[{"GLAD LP Ancient Genotypes 2022 workbook (UCL), derived from the Allen \
 Ancient DNA Resource v44.3."}],
@@ -690,7 +782,7 @@ TimeConstrained[
       WindowSize -> {1020, 820}];
     SetOptions[nbObj, StyleDefinitions -> houseStyles];
     NotebookSave[nbObj, outNb];
-    Print["wrote ", outNb, " (", FileByteCount[outNb], " B)"];
+    Print["wrote evaluated ", outNb, " (", FileByteCount[outNb], " B)"];
     Quiet @ Check[
       Export[outPdf, nbObj];
       Print["wrote ", outPdf, " (", FileByteCount[outPdf], " B)"],
