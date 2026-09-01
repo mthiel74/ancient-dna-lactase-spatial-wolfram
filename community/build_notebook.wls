@@ -66,6 +66,14 @@ tsRow = First @ Map[Association, Normal[Import[FileNameJoin[{repoRoot, "data", "
 ppcRows = Map[Association, Normal[Import[FileNameJoin[{repoRoot, "data", "processed", "posterior_predictive_regional.csv"}], "Dataset", HeaderLines -> 1]]];
 ppcCoverage = N[Mean[Boole[TrueQ[#["Covered95"]] || #["Covered95"] === "true" || #["Covered95"] === "True"] & /@ ppcRows]];
 
+sensRows = Quiet @ Check[
+  Map[Association, Normal[Import[FileNameJoin[{repoRoot, "data", "processed",
+    "sensitivity_posterior_quantiles.csv"}], "Dataset", HeaderLines -> 1]]], {}];
+sensDairyMedians = #["Median"] & /@ Select[sensRows, #["Parameter"] === "SelectionDairying" &];
+sensMigrationOf[scen_] := With[{r = SelectFirst[sensRows,
+    #["Scenario"] === scen && #["Parameter"] === "Migration" &]},
+  If[AssociationQ[r], r["Median"], Missing[]]];
+
 fmt[x_?NumericQ, d_: 3] := ToString[NumberForm[N[x], {12, d}]];
 fmt2[x_?NumericQ] := ToString[NumberForm[N[x], {12, 2}]];
 pct[x_?NumericQ] := ToString[Round[100 N[x]]] <> "%";
@@ -267,7 +275,8 @@ all the way into the pictures"],
 
 animCell[FileNameJoin[{figDir, "hero_lactase_persistence.gif"}],
   "Posterior mean frequency of the lactase-persistence allele (rs4988235-A) \
-across Europe, 8000 BC to today, on the TemperatureMap scale. White-ringed dots \
+across Europe over the last 8,000 years (about 6050 BC to AD 1950), on the \
+TemperatureMap scale. White-ringed dots \
 are the ancient individuals dated within \[PlusMinus]400 years of the moving \
 window; the inset tracks the 95% credible-interval width \[LongDash] where the \
 map is honest about not knowing. This copy is the output of the \
@@ -428,10 +437,10 @@ translates to an approximate per-generation (genic, codominant) selection \
 coefficient s \[TildeTilde] 28\[Beta]/1000. The four regions land between " <>
 fmt[Min[#["SelectionPerGenerationApprox"] & /@ fits], 3] <> " and " <>
 fmt[Max[#["SelectionPerGenerationApprox"] & /@ fits], 3] <>
-" \[LongDash] the familiar few-percent picture, strongest in the north-west, \
-and comfortably bracketing Burger et al.'s 0.06 once you note their estimate \
-concentrates on the last three millennia while these slopes average over \
-eight."}],
+" \[LongDash] the familiar few-percent picture, strongest in the north-west. \
+Burger et al.'s 0.06 is estimated over the last three millennia only, while \
+these slopes average over eight, so it should and does sit at or above the \
+top of this range: time-averaging dilutes a late, strong pulse."}],
 
 evalIn["regionalOutputs = ExportRegionalFitOutputs[Directory[], samples, fits];\nImport[regionalOutputs[\"RegionalFigure\"]]"],
 
@@ -526,7 +535,7 @@ para[{"Approximate Bayesian computation asks the only question a simulator \
 can answer: which parameters produce synthetic data that look like the real \
 data? \"Look like\" is made precise through summary statistics; here, two \
 families. First, the called-allele-weighted regional time-binned frequencies \
-(39 bins). Second \[LongDash] because a spatial model scored only on \
+(" <> ToString[Length[ppcRows]] <> " bins). Second \[LongDash] because a spatial model scored only on \
 regional aggregates can never learn about migration \[LongDash] each sample \
 is matched to its nearest grid cell and time step, and pooled \
 north\[Minus]south and west\[Minus]east frequency contrasts over the last \
@@ -682,12 +691,15 @@ hd1["9.  Which conclusions survive the priors?"],
 para[{"Five complete refits: baseline; halved selection priors; doubled \
 migration prior; and every dairying onset shifted 400 years earlier or \
 later. The dairying-modulated selection component stays positive in all \
-five (medians 0.008\[Dash]0.019) \[LongDash] that conclusion belongs to the \
-data. The migration posterior, by contrast, faithfully tracks whichever \
-prior it is given (median 0.010 baseline \[RightArrow] 0.020 under the \
-widened prior): with " <> ToString[Length[grid]] <> " cells and \
-regionally-pooled summaries, movement is weakly identified, and the honest \
-statement is exactly that."}],
+five (medians " <> fmt[Min[sensDairyMedians], 3] <> "\[Dash]" <>
+fmt[Max[sensDairyMedians], 3] <> ") \[LongDash] though \[Section]11 will \
+temper how much of that is data rather than the non-negative prior. The \
+migration posterior tracks whichever prior it is given (median " <>
+fmt[sensMigrationOf["Baseline"], 3] <> " baseline \[RightArrow] " <>
+fmt[sensMigrationOf["WideMigration"], 3] <> " under the widened prior): \
+with " <> ToString[Length[grid]] <> " cells and regionally-pooled \
+summaries, movement is weakly identified, and the honest statement is \
+exactly that."}],
 
 evalIn["sens = LoadOrRunSensitivity[Directory[], samples];\nImport[FileNameJoin[{Directory[], \"figures\", \"generated\", \"sensitivity_intervals.png\"}]]"]
 
@@ -709,18 +721,25 @@ between the central Balkans and central Europe \[LongDash] roughly the \
 Linearbandkeramik world of modern Hungary, Slovakia, and Austria. What do \
 the ancient genotypes in this dataset say about first appearances?"}],
 
-evalIn["earliest = TakeLargestBy[Select[samples, #[\"DerivedAlleles\"] > 0 &], #[\"MeanDateBP\"] &, 8];\nGrid[\n Prepend[\n  {Round[#[\"MeanDateBP\"]], #[\"Country\"], #[\"Latitude\"], #[\"Longitude\"],\n    #[\"RS4988235Genotype\"], #[\"Publication\"]} & /@ earliest,\n  Style[#, Bold] & /@ {\"years BP\", \"country\", \"lat\", \"lon\", \"call\", \"publication\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+evalIn["earliest = TakeLargestBy[\n  Select[samples, #[\"DerivedAlleles\"] > 0 && #[\"MeanDateBP\"] <= 10000 &],\n  #[\"MeanDateBP\"] &, 10];\nGrid[\n Prepend[\n  {Round[#[\"MeanDateBP\"]], #[\"Country\"], #[\"Latitude\"], #[\"Longitude\"],\n    #[\"RS4988235Genotype\"], #[\"Publication\"]} & /@ earliest,\n  Style[#, Bold] & /@ {\"years BP\", \"country\", \"lat\", \"lon\", \"call\", \"publication\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
 
 evalIn["GeoGraphics[\n Flatten[Table[{RGBColor[0.8, 0.15, 0.1], PointSize[0.013],\n    Point[GeoPosition[{e[\"Latitude\"], e[\"Longitude\"]}]],\n    Black, Text[Style[ToString[Round[e[\"MeanDateBP\"]]] <> \" BP\", 9.5, Bold],\n      GeoPosition[{e[\"Latitude\"] + 1.1, e[\"Longitude\"]}]]},\n   {e, earliest}], 1],\n GeoRange -> {{34, 63}, {-14, 72}}, GeoProjection -> \"Equirectangular\",\n GeoBackground -> GeoStyling[{\"CountryBorders\",\n   \"Land\" -> GrayLevel[0.97], \"Ocean\" -> RGBColor[0.85, 0.9, 0.95]}],\n ImageSize -> 640]"],
 
-captionCell["The eight oldest derived-allele carriers in the dataset. The \
-earliest observations cluster in the southeast \[LongDash] Bulgaria ~6560 \
-BP, Ukraine ~5600 BP, Romania ~5390 BP \[LongDash] before Ireland, Iberia, \
-Britain, and Hungary appear around 5100\[Dash]4270 BP. Each is a single \
-heterozygote, so each is individually weak evidence, and sampling is far \
-from spatially uniform \[LongDash] but the pattern is at least compatible \
-with a central/southeastern European origin of the kind Itan et al. \
-proposed."],
+captionCell["The oldest derived-allele calls within the modelled era \
+(\[LessEqual] 10,000 BP), from the AADR v66 release. Read this table with \
+suspicion, not reverence: most rows are single sequencing reads, and \
+G\[RightArrow]A is the very transition that post-mortem damage produces, \
+so an isolated early \[OpenCurlyDoubleQuote]carrier\[CloseCurlyDoubleQuote] \
+is as likely chemistry as biology \[LongDash] which is why the model fits \
+an explicit error rate rather than taking the table at face value. The \
+cautionary tale is what happened to the previous version of this table: \
+under the 2021-era data behind our first fit, the three oldest carriers \
+formed a tidy southeastern arc (Bulgaria ~6,560 BP, Ukraine ~5,600 BP, \
+Romania ~5,390 BP). Current data dissolve two of the three \[LongDash] the \
+Ukrainian individual has been redated to ~3,985 BP and the Romanian \
+heterozygote is now called GG from the diploid genotypes \[LongDash] \
+leaving one depth-2 heterozygote from Bulgaria carrying what was once a \
+whole origin narrative."],
 
 para[{"The hero animation cannot show any of this, ", ital["by construction"],
 ": its model starts at 10,000 BP with a near-uniform initial frequency, \
@@ -729,23 +748,30 @@ has no mutation event, and \[LongDash] with migration weakly identified \
 up first there because its late samples demand the fastest growth, not \
 because the allele originated there. So let us stop hand-waving and put \
 the origin ", ital["into"], " the model: replace the uniform start with a \
-point source \[LongDash] four new parameters (origin latitude, longitude, \
-time, and the injection frequency), a wider migration prior (a travelling \
-wave has to actually travel: m \[Element] [0.02, 0.6] per generation, \
-integrated stably with exact per-step logistic growth and exponential \
-mixing), and diagonal adjacency so the wave can cross the Dover strait. \
-One scientific commitment is made explicit rather than left to the prior: \
-the source must sit where dairying already existed (within 800 years of \
-the local onset), because the thing being located is the start of the ", \
-ital["selection-driven rise"], ", not the first mutation event \[LongDash] \
-the same gene\[Dash]culture coupling that Itan et al. build into their \
-model. Without it, a drift-free simulator lets a vanishingly small \
-injection idle for millennia in pre-dairying forager regions, and the \
-origin location quietly decouples from the story being told. The same SMC \
-machinery then turns \"where did it start?\" into a posterior \
-distribution:"}],
+point source. Six new parameters: origin latitude, longitude and time \
+(time prior 5,000\[Dash]10,000 BP, wide enough that both Itan et al.'s \
+7,441 BP and the ~6,000 BP rise date of Irving-Pease et al. live inside \
+it); the injection frequency; a genotype-error rate \[Epsilon] \[Element] \
+[0, 0.02], because G\[RightArrow]A is exactly the transition that \
+post-mortem deamination fakes, and a model without an error channel is \
+forced to treat every damaged Palaeolithic read as a real carrier; and a \
+dairying lead time. That last one is the scientific commitment, made \
+explicit and ", ital["fitted"], " rather than hidden in the prior: the \
+source may not precede the local dairying onset by more than the lead \
+(prior 0\[Dash]2,000 years; origins after local onset are unrestricted \
+\[LongDash] the constraint is deliberately asymmetric), because the thing \
+being located is the start of the ", ital["selection-driven rise"], ", not \
+the first mutation event \[LongDash] the same gene\[Dash]culture \
+coupling Itan et al. build into their model. Without it, a drift-free \
+simulator lets a vanishingly small injection idle for millennia in \
+pre-dairying forager regions. Migration gets a wider prior than the main \
+model (a travelling wave has to actually travel: m \[Element] [0.02, 0.3] \
+per generation, capped where the mixing map saturates), the integrator \
+uses exact per-step logistic growth with exponential mixing, and diagonal \
+adjacency lets the wave cross the Dover strait. The same SMC machinery \
+then turns \"where did it start?\" into a posterior distribution:"}],
 
-evalIn["originSmc = LoadOrRunOriginSMCABC[Directory[], samples, grid];\nGrid[\n Prepend[\n  Table[With[{q = SelectFirst[PosteriorParameterQuantiles[originSmc], #[\"Parameter\"] === p &]},\n    {p, NumberForm[q[\"Median\"], {6, 3}],\n     Row[{\"[\", NumberForm[q[\"Lower95\"], {6, 3}], \", \", NumberForm[q[\"Upper95\"], {6, 3}], \"]\"}]}],\n   {p, {\"OriginLatitude\", \"OriginLongitude\", \"OriginTimeBP\",\n     \"Log10InjectFrequency\", \"Migration\", \"SelectionDairying\"}}],\n  Style[#, Bold] & /@ {\"parameter\", \"median\", \"95% interval\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.5, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+evalIn["originSmc = LoadOrRunOriginSMCABC[Directory[], samples, grid];\nGrid[\n Prepend[\n  Table[With[{q = SelectFirst[PosteriorParameterQuantiles[originSmc], #[\"Parameter\"] === p &]},\n    {p, NumberForm[q[\"Median\"], {6, 3}],\n     Row[{\"[\", NumberForm[q[\"Lower95\"], {6, 3}], \", \", NumberForm[q[\"Upper95\"], {6, 3}], \"]\"}]}],\n   {p, {\"OriginLatitude\", \"OriginLongitude\", \"OriginTimeBP\",\n     \"Log10InjectFrequency\", \"Migration\", \"SelectionDairying\",\n     \"DairyingLeadYears\", \"CallErrorRate\"}}],\n  Style[#, Bold] & /@ {\"parameter\", \"median\", \"95% interval\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.5, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
 
 evalIn["OriginDensityMap[originSmc]"],
 
@@ -887,18 +913,23 @@ result\[CloseCurlyDoubleQuote] of the popular retellings."],
 
 evalIn["originDraws = ResamplePosterior[originSmc, 2000];\nsTotal = Quantile[Map[#[\"SelectionBase\"] + #[\"SelectionDairying\"] &, originDraws], {0.025, 0.5, 0.975}];\noRow[p_] := SelectFirst[PosteriorParameterQuantiles[originSmc], #[\"Parameter\"] === p &];\nfq[p_, d_] := With[{q = oRow[p]}, {ToString[NumberForm[q[\"Median\"], {8, d}]],\n   \"[\" <> ToString[NumberForm[q[\"Lower95\"], {8, d}]] <> \", \" <> ToString[NumberForm[q[\"Upper95\"], {8, d}]] <> \"]\"}];\nGrid[\n {Style[#, Bold] & /@ {\"quantity\", \"this model\", \"95% interval\", \"published\", \"source\"},\n  Join[{\"origin latitude (\[Degree]N)\"}, fq[\"OriginLatitude\", 1], {\"\[TildeTilde]48.5 (mode)\", \"Itan 2009, Fig 3\"}],\n  Join[{\"origin longitude (\[Degree]E)\"}, fq[\"OriginLongitude\", 1], {\"\[TildeTilde]13 (mode)\", \"Itan 2009, Fig 3\"}],\n  Join[{\"origin date (years BP)\"}, fq[\"OriginTimeBP\", 0], {\"7441 [6256, 8683]\", \"Itan 2009\"}],\n  Join[{\"selection, dairying term\"}, fq[\"SelectionDairying\", 3], {\"0.0953 [0.0518, 0.159]\", \"Itan 2009 (dairyers)\"}],\n  {\"selection, total in dairying cells\", ToString[NumberForm[sTotal[[2]], {8, 3}]],\n   \"[\" <> ToString[NumberForm[sTotal[[1]], {8, 3}]] <> \", \" <> ToString[NumberForm[sTotal[[3]], {8, 3}]] <> \"]\",\n   \"0.014\[Dash]0.15\", \"Bersaglieri 2004\"},\n  {\"\", \"\", \"\", \"\[TildeTilde]0.06 (last 3 kyr)\", \"Burger 2020\"}},\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
 
-captionCell["Parameter by parameter, the picture splits in two. The \
-date is a success: our median of about 7,200 BP sits close to Itan et \
-al.'s 7,441 BP with heavily overlapping intervals, and it is consistent \
-with Irving-Pease et al. (2024), who date the start of the frequency rise \
-to roughly 6,000 BP from 1,664 imputed ancient genomes. Selection is also \
-a success: our total in dairying cells, 0.039, falls inside every \
-published range \[LongDash] Bersaglieri's 0.014\[Dash]0.15, Burger's \
-\[TildeTilde]0.06 for the last three millennia, Irving-Pease's 0.0194 \
-genome-wide, Itan's 0.0953 among dairyers. Location is the failure, and \
-the marginal medians in this table hide it: a marginal median is a poor \
-summary of a broad multimodal joint posterior, and quoting one here \
-would manufacture an agreement the joint distribution does not support."],
+captionCell["Parameter by parameter. The date lands inside the published \
+envelope: our median of " <> ToString[Round[oT["Median"]]] <> " BP [" <>
+ToString[Round[oT["Lower95"]]] <> ", " <> ToString[Round[oT["Upper95"]]] <>
+"] against Itan et al.'s 7,441 [6,256\[Dash]8,683] \[LongDash] \
+overlapping intervals, with our posterior leaning later, toward the \
+~6,000 BP rise date that Irving-Pease et al. (2024) infer from 1,664 \
+imputed ancient genomes. Selection is order-of-magnitude consistent \
+rather than \[OpenCurlyDoubleQuote]inside every \
+range\[CloseCurlyDoubleQuote]: the total in the table sits inside \
+Bersaglieri's wide 0.014\[Dash]0.15 and near Burger's \[TildeTilde]0.06, \
+but below Itan's dairyers-only interval [0.0518, 0.159] and above \
+Irving-Pease's genome-wide 0.0194 \[LongDash] and these four are not the \
+same quantity (they differ in dominance, conditioning, and time-averaging), \
+so exact containment was never the right test. Location is where honest \
+trouble lives, and marginal medians hide it: a marginal median is a poor \
+summary of a broad multimodal joint posterior, and quoting one here would \
+manufacture agreement the joint distribution does not support."],
 
 para[{"One more check, at the other end of time: extrapolate the fitted \
 uniform-start model to the present (0 BP, i.e. 1950) and compare with \
@@ -907,25 +938,33 @@ the four sampled populations that sit on our grid:"}],
 
 evalIn["modern = {\n  {\"Britain (GBR)\", 52.5, -1.5, 0.720},\n  {\"Iberia (IBS)\", 40.4, -3.7, 0.458},\n  {\"Tuscany (TSI)\", 43.5, 11.0, 0.089},\n  {\"Finland (FIN)\", 61.0, 25.0, 0.591}};\npresent = PosteriorCellStats[draws, grid, {0}][0];\nnearCell[la_, lo_] := First[Ordering[\n   Map[EuclideanDistance[{la, lo Cos[la Degree]},\n     {#[\"Latitude\"], #[\"Longitude\"] Cos[#[\"Latitude\"] Degree]}] &, grid], 1]];\nGrid[\n Prepend[\n  Map[Function[row, With[{i = nearCell[row[[2]], row[[3]]]},\n    {row[[1]], ToString[NumberForm[present[\"Mean\"][[i]], {4, 2}]],\n     \"[\" <> ToString[NumberForm[present[\"Lower95\"][[i]], {4, 2}]] <> \", \" <>\n       ToString[NumberForm[present[\"Upper95\"][[i]], {4, 2}]] <> \"]\",\n     ToString[NumberForm[row[[4]], {4, 2}]]}]], modern],\n  Style[#, Bold] & /@ {\"population\", \"model at 0 BP\", \"95% interval\", \"1000G rs4988235-A\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.4, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
 
+evalIn["mae = Mean[Table[With[{i = nearCell[row[[2]], row[[3]]]},\n    Abs[present[\"Mean\"][[i]] - row[[4]]]], {row, modern}]];\nmaeNull = Mean[Abs[0.5 - #[[4]]] & /@ modern];\nGrid[{Style[#, Bold] & /@ {\"predictor\", \"mean absolute error\"},\n  {\"this model, medians at 0 BP\", NumberForm[mae, {4, 3}]},\n  {\"constant 0.5 for everyone\", NumberForm[maeNull, {4, 3}]}},\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.6, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+
 captionCell["Present-day extrapolation versus 1000 Genomes phase-3 allele \
 frequencies (Ensembl). Everything after ~2,000 BP is extrapolation far \
-beyond the ancient data, and the intervals say so \[LongDash] they span \
-most of the unit interval. The medians put Britain and Finland at the \
-top, correctly, but swap the bottom two, and Iberia's observed value \
-sits just above its upper bound. Read this the honest way: the model is \
-calibrated for the ancient window it was fitted to, and its present-day \
-precision is essentially nil \[LongDash] which is itself worth knowing \
-before anyone quotes the animation's final frame as a prediction."],
+beyond the ancient data, and the wide intervals say so. The second table \
+is the test that keeps everyone honest: it scores the model's medians \
+against the laziest imaginable null \[LongDash] predicting 0.5 for every \
+population. A spatial diffusion\[Dash]selection machine that cannot \
+clearly beat a constant has no present-day predictive content, whichever \
+way the comparison lands in the build you are reading; the model is \
+calibrated for the ancient window it was fitted to, and that is the only \
+window it should be quoted for."],
 
-para[{"Taken together, the verdict is split, and saying so is the \
-point of the section. ", bold["Timing and selection strength check out"],
-": the origin date agrees with Itan et al. and with the newer \
-imputed-genome time series, and the selection coefficient sits inside \
-every published interval. ", bold["Location does not"], ". Our joint \
-posterior over the origin is broad, multimodal, and mode-unstable; it \
-fails to exclude the central-European answer, but failing to exclude is \
-not confirming, and this analysis should not be cited as ancient-DNA \
-support for the Carpathian origin."}],
+para[{"Taken together, the verdict is split, and saying so is the point \
+of the section. ", bold["Timing lands inside the published envelope"],
+" \[LongDash] between Itan et al.'s mode and the imputed-genome rise \
+date \[LongDash] and ", bold["selection strength is order-of-magnitude \
+consistent"], " with all four published anchors. ", bold["Location is not \
+identified"], ", and to the extent the posterior concentrates anywhere \
+under the current data and error model, it leans toward the Atlantic \
+side of Europe rather than the Carpathian Basin \[LongDash] the opposite \
+shore from the textbook answer. Failing to exclude the central-European \
+origin is not support for it: this analysis should not be cited as \
+ancient-DNA confirmation of the Carpathian origin, and whether the \
+westward lean is signal or residual artefact (sampling density, the \
+grid's geometry, the absence of drift) is exactly what the \
+assumption-sensitivity experiments in the repository are for."}],
 
 para[{"It is worth being precise about ", ital["why"], " location fails \
 while timing succeeds, because the reason is in the data rather than the \
@@ -989,8 +1028,7 @@ codeIn["git clone https://github.com/mthiel74/ancient-dna-lactase-spatial-wolfra
 para[{"The package ", mono["src/LactasePersistenceSpatial.wl"],
   " (~2,000 lines) carries the entire workflow behind the one-liners in \
 this post; 24 VerificationTests cover the parsers, the simulator, the \
-summary statistics, and the SMC machinery, and GitHub Actions runs them \
-non-interactively. Repository: ",
+summary statistics, and the SMC machinery. Repository: ",
   link["mthiel74/ancient-dna-lactase-spatial-wolfram",
     "https://github.com/mthiel74/ancient-dna-lactase-spatial-wolfram"], "."}],
 

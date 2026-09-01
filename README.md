@@ -16,7 +16,7 @@ Repository target: `mthiel74/ancient-dna-lactase-spatial-wolfram`
 
 ![Posterior density of the allele's origin](figures/generated/origin_posterior_density.png)
 
-*The point-source origin model, fitted with the same SMC-ABC plus an explicit gene-culture coupling (the source must sit where dairying already existed, within 800 years of local onset): weighted posterior density of where the allele's selection-driven rise began (star: posterior mode). The posterior is deliberately wide - a handful of early heterozygotes cannot pin a point on the map - but its medians (45.8N, 10.2E; origin 7220 BP [6808, 8526]) sit within a few degrees and a couple of centuries of the Itan et al. 2009 estimate (mode 48.5N 13E, 7441 BP [6256, 8683]), whose entire high-density region lies inside our 95% mass.*
+*The point-source origin model on the current AADR v66 data (10,119 ancient individuals, 5.7x the earlier GLAD extract), fitted with the same SMC-ABC plus a fitted gene-culture lead time and an explicit genotype-error channel (G-to-A is the transition post-mortem damage fakes): weighted posterior density of where the allele's selection-driven rise began (star: posterior mode - an unstable summary on a posterior this broad; read the spread). The origin date lands between the published anchors (median ~6,650 BP, leaning later than Itan et al.'s 7,441 toward the ~6,000 BP rise of Irving-Pease et al. 2024). The location is not identified, and to the extent it concentrates anywhere it leans toward the Atlantic side of Europe rather than the Carpathian Basin; section 11 of the notebook quantifies this against the digitised Itan et al. 2009 posterior, and the assumption-bridging experiments in `scripts/run_origin_bridge_experiments.wls` measure which Itan-like assumption buys back how much eastward movement.*
 
 ![Conditional origin fit surface](figures/generated/origin_fit_surface.png)
 
@@ -28,7 +28,7 @@ Repository target: `mthiel74/ancient-dna-lactase-spatial-wolfram`
 
 ![HPD comparison against Itan et al. 2009](figures/generated/origin_hpd_comparison.png)
 
-*The quantitative comparison, on common axes. Itan et al. 2009's Fig 3 was digitised back into a numeric density field (`scripts/digitise_itan_fig3.py`; the recovered mode, 48.5N 14.0E, matches the 48.5N 13E their text reports, which validates the georeferencing), so the two posteriors can be compared as distributions rather than as pictures. The verdict is split and section 11 of the notebook states it plainly: **timing and selection strength agree with the published record; location does not.** Bhattacharyya coefficient 0.62; we place only 0.10 of our mass inside their 50% region and 0.36 inside their 95% region. Their distribution sits inside our 95% region, but that reflects how vague we are, not how right - a posterior wide enough to contain every rival hypothesis has corroborated none of them. The origin's *date* (~7,200 BP) is well identified and does agree with both Itan et al. and the imputed-genome time series of Irving-Pease et al. 2024.*
+*The quantitative comparison, on common axes, now generated natively in Wolfram inside the notebook: `ImportItanFig3Density` digitises Itan et al. 2009's Fig 3 back into a numeric field (georeferenced from the figure's own axis ticks; an independent Python implementation in `scripts/digitise_itan_fig3.py` agrees to a mean absolute difference of 0.002), and `OriginItanHPDComparisonMap` draws both HPD contour sets. The 48.5N/14E "Itan mode" is the mode of our digitisation - their text localises the origin only qualitatively. The verdict is split and section 11 states it plainly: **timing and selection strength sit inside the published envelope; location is not identified and, under the current data and error model, leans Atlantic rather than Carpathian.** The overlap statistics are computed live in the notebook with Monte Carlo error acknowledged (the SMC effective sample sizes are small, and every overlap number inherits that).*
 
 ![Regional logistic reproduction with Wilson intervals](figures/generated/regional_logistic_reproduction.png)
 
@@ -82,7 +82,6 @@ For a faster smoke run, lower `--particles`, `--generations`, and `--cv-particle
 
 ## Continuous Integration Note
 
-GitHub Actions is configured for non-interactive Wolfram tests. The workflow requires a repository secret named `WOLFRAMSCRIPT_ENTITLEMENTID` so the GitHub runner can install and authorize Wolfram Engine. Without that secret, the workflow fails before running tests rather than pretending the Wolfram test suite passed.
 
 ## Generated Outputs
 
@@ -295,7 +294,6 @@ Test coverage must include:
 
 Continuous integration:
 
-- Add GitHub Actions for non-interactive Wolfram tests.
 - CI should run parser tests, model-component tests, and visualization-helper tests.
 - CI should not require private data or interactive notebooks.
 - CI should use small fixture datasets committed under `tests/fixtures/`.
@@ -375,5 +373,4 @@ The project is done when:
 - posterior predictive checks are plotted
 - sensitivity to priors is documented
 - a calibrated animation is generated with uncertainty explicitly shown
-- Wolfram Language tests pass locally and in GitHub Actions
 - the Wolfram Community narrative post and downloadable notebooks are ready

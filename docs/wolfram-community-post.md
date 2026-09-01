@@ -104,7 +104,7 @@ wolframscript -file scripts/run_pipeline.wls --particles 400 --generations 5
 wolframscript -file scripts/run_tests.wls
 ```
 
-The package (`src/LactasePersistenceSpatial.wl`, ~1,650 lines) exposes the full workflow — `RetrieveRawData`, `WriteProcessedData`, `FitAllRegionalLogistics`, `RunSMCABC`, `RunSMCCrossValidation`, `RunTimeSliceValidation`, `RunSensitivityAnalysis`, `ExportSpatialVisualizations` — and 24 `VerificationTest`s cover parsing, the simulator, the summary statistics, and the SMC machinery; GitHub Actions runs them non-interactively.
+The package (`src/LactasePersistenceSpatial.wl`, ~1,650 lines) exposes the full workflow — `RetrieveRawData`, `WriteProcessedData`, `FitAllRegionalLogistics`, `RunSMCABC`, `RunSMCCrossValidation`, `RunTimeSliceValidation`, `RunSensitivityAnalysis`, `ExportSpatialVisualizations` — and 24 `VerificationTest`s cover parsing, the simulator, the summary statistics, and the SMC machinery.
 
 Repository: <https://github.com/mthiel74/ancient-dna-lactase-spatial-wolfram>
 

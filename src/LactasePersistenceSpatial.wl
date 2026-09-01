@@ -1723,6 +1723,9 @@ ExportSMCOutputs[root_String, samples_List, grid_List, smc_Association, posterio
   processedDir = FileNameJoin[{root, "data", "processed"}];
   figDir = FileNameJoin[{root, "figures", "generated"}];
   particlesFile = FileNameJoin[{processedDir, "smc_particles.csv"}];
+  (* fingerprint sidecar so LoadOrRunSMCABC can trust this cache later *)
+  WriteCacheMeta[particlesFile <> ".meta.json",
+    CacheFingerprint[samples, grid, smc["PriorSpecUsed"]]];
   posteriorFile = FileNameJoin[{processedDir, "abc_posterior.csv"}];
   diagFile = FileNameJoin[{processedDir, "smc_diagnostics.csv"}];
   quantFile = FileNameJoin[{processedDir, "posterior_parameter_quantiles.csv"}];
