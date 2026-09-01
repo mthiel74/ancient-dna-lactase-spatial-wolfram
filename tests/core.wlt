@@ -188,9 +188,9 @@ VerificationTest[
         "Latitude" -> 40., "Longitude" -> 20.|>
     };
     stats = LactasePersistenceSpatial`Private`ObservedGradientStatistics[index];
-    {Round[stats["NorthSouth"], 0.01], stats["NorthSouthWeight"]}
+    {Round[stats["NorthSouth"], 0.01], Round[stats["NorthSouthWeight"], 0.01]}
   ],
-  {0.5, 10},
+  {0.5, 21.78},
   TestID -> "gradient-statistics"
 ]
 

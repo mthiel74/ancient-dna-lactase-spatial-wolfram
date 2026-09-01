@@ -61,6 +61,9 @@ ExportOriginSpread::usage = "ExportOriginSpread[root, samples, grid, smc] render
 OriginFitSurface::usage = "OriginFitSurface[samples, grid, smc] returns the ABC distance obtained by placing the point source in each land cell with all other parameters at their posterior medians.";
 OriginFitSurfaceMap::usage = "OriginFitSurfaceMap[samples, grid, smc] maps the conditional origin fit-quality scan (yellow/red where the data prefer the origin).";
 
+ImportItanFig3Density::usage = "ImportItanFig3Density[root] digitises Itan et al. 2009 Figure 3 (CC BY) into a numeric relative-density field on a half-degree lon/lat grid, using the figure's own axis ticks for georeferencing and an analytic inverse of its rainbow colour ramp.";
+OriginItanHPDComparisonMap::usage = "OriginItanHPDComparisonMap[smc, root] draws 50%/95% highest-posterior-density contours of this model's origin posterior and of the digitised Itan et al. 2009 posterior on common axes, and exports figures/generated/origin_hpd_comparison.png.";
+
 Begin["`Private`"];
 
 $GLADAncientGenotypesURL =
@@ -423,9 +426,17 @@ RestoreSampleTypes[row_Association] := Module[{numeric, bool},
   ]
 ];
 
+$ProcessedSamplesFileName = Automatic;
+
 LoadProcessedSamples[rootOrFile_String] := Module[{file, data, headers},
   file = If[DirectoryQ[rootOrFile],
-    FileNameJoin[{rootOrFile, "data", "processed", "glad_rs4988235_called_samples.csv"}],
+    Module[{dir = FileNameJoin[{rootOrFile, "data", "processed"}], v66, glad},
+      v66 = FileNameJoin[{dir, "aadr_v66_rs4988235_called_samples.csv"}];
+      glad = FileNameJoin[{dir, "glad_rs4988235_called_samples.csv"}];
+      Which[
+        StringQ[$ProcessedSamplesFileName], FileNameJoin[{dir, $ProcessedSamplesFileName}],
+        FileExistsQ[v66], v66,
+        True, glad]],
     rootOrFile
   ];
   data = Import[file, "CSV"];
@@ -685,9 +696,12 @@ RegionMeanFrequency[grid_List, freqs_List, region_String] := Module[{idx},
   If[idx === {}, Missing["NoCells"], Mean[freqs[[idx]]]]
 ];
 
+$SimulatorStartBP = 10000;
+
 ObservedSummaries[samples_List, binSize_: 1000] :=
   Select[RegionalBinnedFrequencies[samples, binSize],
-    MemberQ[$AnalysisRegions, #Region] && #CalledAlleles >= 2 &
+    MemberQ[$AnalysisRegions, #Region] && #CalledAlleles >= 2 &&
+      #TimeBinMidBP <= $SimulatorStartBP &
   ];
 
 PredictedSummariesFromTrajectory[trajectory_Association, grid_List, observed_List] := Module[
@@ -716,7 +730,8 @@ $PriorSpec = <|
   "SelectionMultiplierBritishIsles" -> {0.8, 2.2},
   "SelectionMultiplierRhineDanube" -> {0.6, 1.8},
   "SelectionMultiplierMediterranean" -> {0.4, 1.4},
-  "SelectionMultiplierBaltic" -> {0.8, 2.4}
+  "SelectionMultiplierBaltic" -> {0.8, 2.4},
+  "CallErrorRate" -> {0., 0.02}
 |>;
 
 PriorVectorSample[spec_: Automatic] := Module[{s},
@@ -1302,7 +1317,7 @@ BuildObservationIndex[samples_List, grid_List] := Module[{coords, nf, sel},
   nf = Nearest[coords -> "Index"];
   sel = Select[samples,
     TrueQ[#["HasCall"]] && NumericValueQ[#["Latitude"]] && NumericValueQ[#["Longitude"]] &&
-      NumericValueQ[#["MeanDateBP"]] && #["MeanDateBP"] <= 12000 &&
+      NumericValueQ[#["MeanDateBP"]] && #["MeanDateBP"] <= $SimulatorStartBP &&
       MemberQ[Append[$AnalysisRegions, "Other Europe"], #["Region"]] &
   ];
   Map[
@@ -1351,10 +1366,20 @@ ObservedGradientStatistics[index_List, window_: {0, 4000}] := Module[{pools, fN,
   fS = PooledFrequency[index, pools["South"]];
   fW = PooledFrequency[index, pools["West"]];
   fE = PooledFrequency[index, pools["East"]];
+  (* weight = precision of a difference of two proportions under a common p:
+     nEff/(p(1-p)) with nEff the paired harmonic mean, not min(n1,n2) *)
   wNS = If[MissingQ[fN] || MissingQ[fS], 0,
-    Min[Total[index[[pools["North"], "Called"]]], Total[index[[pools["South"], "Called"]]]]];
+    Module[{n1 = Total[index[[pools["North"], "Called"]]],
+        n2 = Total[index[[pools["South"], "Called"]]], nEff, pBar},
+      nEff = (n1 n2)/(n1 + n2 + 0.);
+      pBar = (fN n1 + fS n2 + 0.5)/(n1 + n2 + 1.);
+      nEff/(pBar (1 - pBar))]];
   wWE = If[MissingQ[fW] || MissingQ[fE], 0,
-    Min[Total[index[[pools["West"], "Called"]]], Total[index[[pools["East"], "Called"]]]]];
+    Module[{n1 = Total[index[[pools["West"], "Called"]]],
+        n2 = Total[index[[pools["East"], "Called"]]], nEff, pBar},
+      nEff = (n1 n2)/(n1 + n2 + 0.);
+      pBar = (fW n1 + fE n2 + 0.5)/(n1 + n2 + 1.);
+      nEff/(pBar (1 - pBar))]];
   <|
     "Pools" -> pools,
     "NorthSouth" -> If[wNS > 0, fN - fS, 0.],
@@ -1381,15 +1406,24 @@ ExtendedObservedData[samples_List, grid_List, binSize_: 1000] := Module[{binned,
     "Gradient" -> First[gradients], "Gradients" -> gradients|>
 ];
 
-ExtendedDistance[obsData_Association, trajectory_Association, grid_List] := Module[
-  {binned, predicted, binWeights, binDiffs, gradients, ps, num, den},
+ExtendedDistance[obsData_Association, trajectory_Association, grid_List, callErr_: 0.] := Module[
+  {binned, predicted, predFreqs, pTilde, binWeights, binDiffs, gradients, ps, num, den},
   binned = obsData["Binned"];
   predicted = PredictedSummariesFromTrajectory[trajectory, grid, binned];
-  binWeights = binned[[All, "CalledAlleles"]];
-  binDiffs = binned[[All, "Frequency"]] - predicted[[All, "PredictedFrequency"]];
+  (* genotype-error / post-mortem-damage channel: model frequency p is observed
+     through q = p(1-e) + (1-p)e, so isolated early derived calls (G>A is the
+     damage-mode transition) need not force a real early presence *)
+  predFreqs = (1 - 2 callErr) predicted[[All, "PredictedFrequency"]] + callErr;
+  (* binomial-precision (GLS) weights with a Haldane-corrected p: a near-zero
+     bin of n alleles is ~1/(p(1-p)) times more informative per allele than a
+     mid-frequency bin, and the early bins are where the origin signal lives *)
+  pTilde = (binned[[All, "Frequency"]] binned[[All, "CalledAlleles"]] + 0.5)/
+    (binned[[All, "CalledAlleles"]] + 1.);
+  binWeights = binned[[All, "CalledAlleles"]]/(pTilde (1 - pTilde));
+  binDiffs = binned[[All, "Frequency"]] - predFreqs;
   gradients = Lookup[obsData, "Gradients", {obsData["Gradient"]}];
   ps = If[AnyTrue[gradients, #["NorthSouthWeight"] > 0 || #["WestEastWeight"] > 0 &],
-    PredictedSampleProbabilities[trajectory, obsData["Index"]], {}];
+    (1 - 2 callErr) PredictedSampleProbabilities[trajectory, obsData["Index"]] + callErr, {}];
   num = Total[binWeights binDiffs^2];
   den = Total[binWeights];
   Do[
@@ -1435,11 +1469,11 @@ SMCDistanceForVector[vector_List, obsData_Association, grid_List, spec_] := Modu
        drift) lets a tiny injection idle for millennia in forager regions
        and the origin location decouples from the coevolution story. *)
     onsetGap = params["OriginTimeBP"] - grid[[originIdx]]["DairyingOnsetBP"] -
-      $OriginDairyingLeadYears;
+      Lookup[params, "DairyingLeadYears", $OriginDairyingLeadYears];
     If[onsetGap > 0, Return[3. + onsetGap/1000.]];
   ];
   trajectory = SimulateSpatialTrajectory[params, grid];
-  ExtendedDistance[obsData, trajectory, grid]
+  ExtendedDistance[obsData, trajectory, grid, Lookup[params, "CallErrorRate", 0.]]
 ];
 
 GaussianKernelDensityRows[candidates_List, previous_List, sds_List] := Module[
@@ -1474,6 +1508,10 @@ FromUnboundedVector[y_List, spec_] := MapThread[
 
 LogisticPriorDensity[y_List] := Times @@ (Exp[-#]/(1 + Exp[-#])^2 & /@ y);
 
+$PenaltyFloor = 3.;
+
+RunSMCABC::priorstarved = "Only `1` of `2` requested particles satisfied the support constraints within the simulation budget; results are unreliable.";
+
 Options[RunSMCABC] = {
   "Particles" -> 400,
   "Generations" -> 5,
@@ -1500,11 +1538,29 @@ RunSMCABC[samples_List, grid_List, OptionsPattern[]] := Module[
   obsData = ExtendedObservedData[samples, grid, OptionValue["BinSizeYears"]];
   BlockRandom[
     SeedRandom[seed];
-    vectors = Table[PriorVectorSample[spec], {n}];
+    (* generation 1 rejection-samples the CONSTRAINED prior: draws violating a
+       support constraint (sea origin, dairying-lead violation) return a
+       sentinel distance >= $PenaltyFloor and are discarded here, so they can
+       neither contaminate the median-based adaptive tolerance nor be
+       resampled as parents.  The violation rate is recorded. *)
+    Module[{valid = {}, validD = {}, tries = 0, batchV, batchD, keep},
+      While[Length[valid] < n && tries < maxSims,
+        batchV = Table[PriorVectorSample[spec], {Min[2 n, maxSims - tries]}];
+        tries += Length[batchV];
+        batchD = SMCDistanceForVector[#, obsData, grid, spec] & /@ batchV;
+        keep = Select[Range[Length[batchD]], batchD[[#]] < $PenaltyFloor &];
+        valid = Join[valid, batchV[[keep]]];
+        validD = Join[validD, batchD[[keep]]];
+      ];
+      totalSims += tries;
+      $LastPriorViolationRate = N[1. - Length[valid]/Max[tries, 1]];
+      If[Length[valid] < n,
+        Message[RunSMCABC::priorstarved, Length[valid], n]];
+      vectors = valid[[;; Min[n, Length[valid]]]];
+      dists = validD[[;; Length[vectors]]];
+    ];
     ys = ToUnboundedVector[#, spec] & /@ vectors;
-    dists = SMCDistanceForVector[#, obsData, grid, spec] & /@ vectors;
-    totalSims += n;
-    weights = ConstantArray[1./n, n];
+    weights = ConstantArray[1./Length[vectors], Length[vectors]];
     eps = Quantile[dists, q];
     AppendTo[epsHistory, eps];
     AppendTo[accHistory, 1.];
@@ -1569,6 +1625,7 @@ RunSMCABC[samples_List, grid_List, OptionsPattern[]] := Module[
     "ESSHistory" -> essHistory,
     "TotalSimulations" -> totalSims,
     "GenerationShortfall" -> generationShortfall,
+    "PriorViolationRate" -> $LastPriorViolationRate,
     "ObservedSummaries" -> obsData["Binned"],
     "PriorSpecUsed" -> spec
   |>
@@ -1728,15 +1785,18 @@ RunSMCCrossValidation[samples_List, grid_List, OptionsPattern[]] := Module[
 ];
 
 Options[RunTimeSliceValidation] = {
-  "CutBP" -> 2500, "Particles" -> 150, "Generations" -> 4, "Seed" -> 311226, "PosteriorDraws" -> 60
+  "CutBP" -> 3000, "Particles" -> 150, "Generations" -> 4, "Seed" -> 311226, "PosteriorDraws" -> 60
 };
 
 RunTimeSliceValidation[samples_List, grid_List, OptionsPattern[]] := Module[
   {cut, trainSamples, obsAll, heldObs, smc, draws, ppc, diffs, covered},
   cut = OptionValue["CutBP"];
-  trainSamples = Select[samples, NumericValueQ[#["MeanDateBP"]] && #["MeanDateBP"] > cut &];
+  (* cut is a BIN EDGE: training keeps samples at or older than the edge and
+     held-out bins lie strictly below it, so no individual can appear on both
+     sides (a cut inside a bin leaks samples into the held-out summaries) *)
+  trainSamples = Select[samples, NumericValueQ[#["MeanDateBP"]] && #["MeanDateBP"] >= cut &];
   obsAll = ObservedSummaries[samples];
-  heldObs = Select[obsAll, #TimeBinMidBP <= cut &];
+  heldObs = Select[obsAll, #TimeBinMidBP < cut &];
   smc = RunSMCABC[trainSamples, grid,
     "Particles" -> OptionValue["Particles"],
     "Generations" -> OptionValue["Generations"],
@@ -1960,11 +2020,23 @@ ExportHeroAnimation[root_String, samples_List, grid_List, posterior_List, Option
 
 (* --- reconstruct a stored SMC result so notebooks evaluate fast --- *)
 
+CacheFingerprint[samples_List, grid_List, spec_] := Hash[
+  {Length[samples], Total[Lookup[#, "CalledAlleles", 0] & /@ samples],
+   Length[grid], Keys[spec], Values[spec]}, "SHA256"];
+
+CacheValidQ[metaFile_String, fp_Integer] :=
+  FileExistsQ[metaFile] && Quiet[Check[Import[metaFile, "RawJSON"]["Fingerprint"] === fp, False]];
+
+WriteCacheMeta[metaFile_String, fp_Integer] :=
+  Export[metaFile, <|"Fingerprint" -> fp, "Written" -> DateString["ISODateTime"]|>, "JSON"];
+
 LoadOrRunSMCABC[root_String, samples_List, grid_List, opts___] := Module[
   {particlesFile, diagFile, rows, diag, spec, keys, vectors, weights, particles, obsData},
   particlesFile = FileNameJoin[{root, "data", "processed", "smc_particles.csv"}];
   diagFile = FileNameJoin[{root, "data", "processed", "smc_diagnostics.csv"}];
-  If[! (FileExistsQ[particlesFile] && FileExistsQ[diagFile]),
+  If[! (FileExistsQ[particlesFile] && FileExistsQ[diagFile] &&
+        CacheValidQ[particlesFile <> ".meta.json",
+          CacheFingerprint[samples, grid, $PriorSpec]]),
     Return[RunSMCABC[samples, grid, opts]]
   ];
   rows = Map[Association, Normal[Import[particlesFile, "Dataset", HeaderLines -> 1]]];
@@ -2089,15 +2161,17 @@ $OriginDairyingLeadYears = 800.;
 $OriginPriorSpec = <|
   "OriginLatitude" -> {36., 62.},
   "OriginLongitude" -> {-10., 34.},
-  "OriginTimeBP" -> {6800., 9600.},
+  "OriginTimeBP" -> {5000., 10000.},
   "Log10InjectFrequency" -> {-3., -1.},
   "SelectionBase" -> {0.0, 0.015},
   "SelectionDairying" -> {0.0, 0.06},
-  "Migration" -> {0.02, 0.6},
+  "Migration" -> {0.02, 0.3},
   "SelectionMultiplierBritishIsles" -> {0.8, 2.2},
   "SelectionMultiplierRhineDanube" -> {0.6, 1.8},
   "SelectionMultiplierMediterranean" -> {0.4, 1.4},
-  "SelectionMultiplierBaltic" -> {0.8, 2.4}
+  "SelectionMultiplierBaltic" -> {0.8, 2.4},
+  "DairyingLeadYears" -> {0., 2000.},
+  "CallErrorRate" -> {0., 0.02}
 |>;
 
 Options[RunOriginSMCABC] = {"Particles" -> 800, "Generations" -> 6, "Seed" -> 19470}; 
@@ -2114,8 +2188,12 @@ LoadOrRunOriginSMCABC[root_String, samples_List, grid_List, opts___] := Module[
   {particlesFile, diagFile, rows, diag, spec, keys, vectors, weights, particles, obsData, smc},
   particlesFile = FileNameJoin[{root, "data", "processed", "origin_smc_particles.csv"}];
   diagFile = FileNameJoin[{root, "data", "processed", "origin_smc_diagnostics.csv"}];
-  If[! (FileExistsQ[particlesFile] && FileExistsQ[diagFile]),
+  If[! (FileExistsQ[particlesFile] && FileExistsQ[diagFile] &&
+        CacheValidQ[particlesFile <> ".meta.json",
+          CacheFingerprint[samples, grid, $OriginPriorSpec]]),
     smc = RunOriginSMCABC[samples, grid, opts];
+    WriteCacheMeta[particlesFile <> ".meta.json",
+      CacheFingerprint[samples, grid, $OriginPriorSpec]];
     ExportRows[particlesFile,
       MapThread[Append[#1, "Weight" -> #2] &, {smc["Particles"], smc["Weights"]}]];
     ExportRows[diagFile,
@@ -2258,7 +2336,8 @@ ExportOriginSpread[root_String, samples_List, grid_List, smc_Association, Option
 OriginFitSurface[samples_List, grid_List, smc_Association] := Module[
   {q, med, obsData, base, dists},
   q = PosteriorParameterQuantiles[smc];
-  med[p_] := SelectFirst[q, #["Parameter"] === p &]["Median"];
+  med[p_] := With[{r = SelectFirst[q, #["Parameter"] === p &]},
+    If[AssociationQ[r], r["Median"], Missing["NotFitted"]]];
   obsData = ExtendedObservedData[samples, grid];
   base = <|
     "OriginTimeBP" -> med["OriginTimeBP"],
@@ -2276,7 +2355,7 @@ OriginFitSurface[samples_List, grid_List, smc_Association] := Module[
       SimulateSpatialTrajectory[
         Join[base, <|"OriginLatitude" -> grid[[i, "Latitude"]],
           "OriginLongitude" -> grid[[i, "Longitude"]]|>], grid],
-      grid],
+      grid, If[NumericQ[med["CallErrorRate"]], med["CallErrorRate"], 0.]],
     {i, Length[grid]}];
   dists
 ];
@@ -2289,6 +2368,146 @@ OriginFitSurfaceMap[samples_List, grid_List, smc_Association] := Module[
   SpatialMap[grid, support, fitness, {},
     "Conditional fit quality by origin cell (yellow/red: best fit)",
     (ColorData["TemperatureMap"][#] &), 0.92, {0, 1}, "relative fit quality"]
+];
+
+(* ------------------------------------------------------------------ *)
+(* Digitisation of Itan et al. 2009 Fig 3 (PLoS Comput Biol, CC BY)   *)
+(* and the licence-clean HPD-contour comparison figure.               *)
+(* Georeference read off the figure's own tick marks: parallels are   *)
+(* horizontal (rows 110,346,589,837,1088 = 60..40N), meridians are    *)
+(* straight lines converging northward (35.85 px/deg at the top frame,*)
+(* 42.15 at the bottom).  The colour ramp blue-cyan-green-yellow-red  *)
+(* is inverted analytically; contour bands are ASSUMED linear in      *)
+(* density (the paper publishes no colour scale), so mode locations   *)
+(* are robust but overlap statistics are approximate.                 *)
+(* ------------------------------------------------------------------ *)
+
+$ItanGridLons = Range[-10., 32., 0.5];
+$ItanGridLats = Range[36., 60., 0.5];
+
+ItanRampValue[{r_, g_, b_}] := Module[{t, resid},
+  {t, resid} = Which[
+    r < 0.5 && b >= g,            {g/4., Norm[{r, g, b} - {0., g, 1.}]},
+    r < 0.5 && b > 0.02,          {(2. - b)/4., Norm[{r, g, b} - {0., 1., b}]},
+    r >= 0.5 && g < r && b < 0.5, {(4. - g)/4., Norm[{r, g, b} - {1., g, 0.}]},
+    True,                         {(2. + r)/4., Norm[{r, g, b} - {r, 1., 0.}]}];
+  If[resid < 0.28, t, Missing["OffRamp"]]
+];
+
+ItanPixelValue[data_, row_, col_] := Module[{px},
+  px = data[[row, col]];
+  Which[
+    Min[px] > 0.9, Missing["Sea"],
+    Max[px] < 0.35 && Mean[px] < 0.25, Missing["Ink"],
+    True, ItanRampValue[px]]
+];
+
+ImportItanFig3Density[root_String] := ImportItanFig3Density[root] = Module[
+  {png, data, latToRow, lonScale, offsets, vals, nlat, nlon},
+  png = FileNameJoin[{root, "docs", "images", "originals",
+    "itan2009_fig3_origin_density.png"}];
+  data = ImageData[RemoveAlphaChannel[Import[png]]][[All, All, 1 ;; 3]];
+  latToRow = Interpolation[
+    Transpose[{{40., 45., 50., 55., 60.}, {1088., 837., 589., 346., 110.}}],
+    InterpolationOrder -> 3];
+  lonScale = Function[r, 35.85 + (42.15 - 35.85) (r - 110.)/1180.];
+  (* nearest-valid fallback around the target pixel: beats anti-aliased
+     band boundaries and thin coastline ink (NOT an average) *)
+  offsets = {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, -1},
+    {1, -1}, {-1, 1}, {2, 0}, {-2, 0}, {0, 2}, {0, -2}, {2, 2}, {-2, -2}};
+  nlat = Length[$ItanGridLats]; nlon = Length[$ItanGridLons];
+  vals = Quiet[Table[
+    Module[{la = $ItanGridLats[[i]], lo = $ItanGridLons[[j]], row, col, v},
+      row = Round[latToRow[la]];
+      col = Round[611. + lonScale[row] lo];
+      v = Missing["Unresolved"];
+      Do[
+        With[{rr = row + o[[1]], cc = col + o[[2]]},
+          If[1 <= rr <= Length[data] && 1 <= cc <= Length[data[[1]]],
+            With[{p = ItanPixelValue[data, rr, cc]},
+              If[NumericQ[p], v = p; Break[]]]]],
+        {o, offsets}];
+      v],
+    {i, nlat}, {j, nlon}], InterpolatingFunction::dmval];
+  <|"Lons" -> $ItanGridLons, "Lats" -> $ItanGridLats, "Values" -> vals|>
+];
+
+OriginHPDLevels[flat_List, levels_List] := Module[{srt, cum},
+  srt = Reverse[Sort[flat]]; cum = Accumulate[srt];
+  Table[srt[[Min[LengthWhile[cum, # < l Total[flat] &] + 1, Length[srt]]]], {l, levels}]
+];
+
+(* boolean mask of the smallest set of cells holding a posterior mass level;
+   drawing the 0.5-contour of this indicator is the exact HPD boundary and
+   sidesteps ListContourPlot clipping high density levels via its automatic
+   z-PlotRange *)
+HPDIndicatorMask[p_List, lev_?NumericQ] := Module[{flat = Flatten[p], ord, cum, k, thr},
+  ord = Ordering[flat, All, Greater]; cum = Accumulate[flat[[ord]]];
+  k = LengthWhile[cum, # < lev Total[flat] &] + 1;
+  thr = flat[[ord[[Min[k, Length[ord]]]]]];
+  Map[Boole[# >= thr] &, p, {2}]
+];
+
+HPDContour[p_List, lev_?NumericQ, style_] := ListContourPlot[
+  N[HPDIndicatorMask[p, lev]], DataRange -> {{-10, 32}, {36, 60}},
+  Contours -> {0.5}, ContourShading -> None, ContourStyle -> {style},
+  PlotRange -> All
+];
+
+OriginItanHPDComparisonMap[smc_Association, root_String] := Module[
+  {itan, lons, lats, land, areaW, pI, pO, plat, plon, w, backdrop,
+   itanC, ourC, modes, fig, outFile},
+  itan = ImportItanFig3Density[root];
+  lons = itan["Lons"]; lats = itan["Lats"];
+  land = Map[NumericQ, itan["Values"], {2}];
+  areaW = Table[Cos[la Degree], {la, lats}, {lo, lons}];
+  pI = MapThread[If[#3, #1 #2, 0.] &, {itan["Values"] /. _Missing -> 0., areaW, land}, 2];
+  pI = pI/Total[pI, 2];
+  plat = smc["ParticleVectors"][[All, 1]]; plon = smc["ParticleVectors"][[All, 2]];
+  w = smc["Weights"];
+  pO = Table[
+    If[land[[i, j]],
+      areaW[[i, j]] Total[w Exp[-0.5 (((lons[[j]] - plon)/2.6)^2 +
+        ((lats[[i]] - plat)/2.0)^2)]], 0.],
+    {i, Length[lats]}, {j, Length[lons]}];
+  pO = pO/Total[pO, 2];
+  (* rows follow ascending latitude, which is exactly Raster's bottom-up order *)
+  backdrop = Map[
+    If[#, {0.961, 0.953, 0.933}, {0.863, 0.910, 0.949}] &, land, {2}];
+  itanC = With[{pIs = Module[{sm = GaussianFilter[pI, 2]}, sm/Total[sm, 2]]},
+    {HPDContour[pIs, 0.95, Directive[RGBColor[0.12, 0.44, 0.71], Dashed, AbsoluteThickness[1.6]]],
+     HPDContour[pIs, 0.50, Directive[RGBColor[0.12, 0.44, 0.71], AbsoluteThickness[2.8]]]}];
+  ourC = {HPDContour[pO, 0.95, Directive[RGBColor[0.75, 0.22, 0.17], Dashed, AbsoluteThickness[1.6]]],
+    HPDContour[pO, 0.50, Directive[RGBColor[0.75, 0.22, 0.17], AbsoluteThickness[2.8]]]};
+  modes = Map[
+    Function[p, Module[{pos = First @ Position[p, Max[p]]},
+      {lons[[pos[[2]]]], lats[[pos[[1]]]]}]],
+    {pI, pO}];
+  fig = Legended[
+    Show[
+      Graphics[{Raster[backdrop, {{-10, 36}, {32, 60}}]}],
+      Sequence @@ ourC, Sequence @@ itanC,
+      Graphics[{
+        RGBColor[0.12, 0.44, 0.71], EdgeForm[White],
+        Polygon[Table[modes[[1]] + 0.9 (1 - 0.6 Mod[k, 2]) {Sin[k Pi/5], Cos[k Pi/5]}, {k, 0, 9}]],
+        RGBColor[0.75, 0.22, 0.17], EdgeForm[White],
+        Polygon[Table[modes[[2]] + 0.9 (1 - 0.6 Mod[k, 2]) {Sin[k Pi/5], Cos[k Pi/5]}, {k, 0, 9}]]}],
+      Frame -> True, PlotRange -> {{-10, 32}, {36, 60}}, AspectRatio -> 24./(42. Cos[48. Degree]),
+      FrameLabel -> {"longitude (\[Degree]E)", "latitude (\[Degree]N)"},
+      PlotLabel -> Style["Origin posteriors on common axes: this model vs Itan et al. 2009",
+        13, Bold, Black],
+      ImageSize -> 700],
+    Placed[LineLegend[
+      {Directive[RGBColor[0.12, 0.44, 0.71], AbsoluteThickness[2.8]],
+       Directive[RGBColor[0.12, 0.44, 0.71], Dashed],
+       Directive[RGBColor[0.75, 0.22, 0.17], AbsoluteThickness[2.8]],
+       Directive[RGBColor[0.75, 0.22, 0.17], Dashed]},
+      {"Itan 2009, 50% HPD (digitised)", "Itan 2009, 95% HPD",
+       "this work, 50% HPD", "this work, 95% HPD"},
+      LegendMarkerSize -> 24], Below]];
+  outFile = FileNameJoin[{root, "figures", "generated", "origin_hpd_comparison.png"}];
+  Export[outFile, fig, ImageResolution -> 144];
+  fig
 ];
 
 End[];

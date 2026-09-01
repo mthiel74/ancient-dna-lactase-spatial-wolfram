@@ -778,26 +778,38 @@ this section tests the fit against estimates it never saw. The benchmark \
 is ", bold["Itan et al. (2009)"], " \[LongDash] a demic coevolution \
 simulation driven by archaeological settlement dates and ", ital["modern"],
 " allele frequencies, with no ancient genotypes at all. Our fit uses ",
-ital["only"], " ancient genotypes. The two are about as close to \
-independent lines of evidence as this field offers, which is what makes \
-the comparison worth doing \[LongDash] and worth doing ",
+ital["only"], " ancient genotypes. The two are largely \[LongDash] not \
+entirely \[LongDash] independent: our gene\[Dash]culture coupling \
+consults the same archaeological dairying chronology that drives their \
+simulation, so the origin-", ital["date"], " comparison shares an input, \
+while the genetic data are disjoint. That still makes the comparison \
+worth doing \[LongDash] and worth doing ",
 ital["numerically"], ", not by putting two pictures next to each other and \
 inviting the eye to find agreement. Two maps that share a warm patch can \
 still be quantitatively far apart, and here they are."}],
 
-para[{"So the first step is to turn their figure back into numbers. Their \
-Fig 3 carries tick marks at known latitudes and longitudes, so the pixel \
-grid can be georeferenced exactly, and the filled contour bands run along \
-a standard blue\[Dash]cyan\[Dash]green\[Dash]yellow\[Dash]red ramp that \
-inverts analytically to a relative density. ", mono["scripts/digitise_itan_fig3.py"],
-" does this and writes ", mono["data/processed/itan2009_origin_density_digitised.csv"],
-". The digitisation validates itself: the recovered mode lands at \
-48.5\[Degree]N, 14.0\[Degree]E against the 48.5\[Degree]N, 13\[Degree]E \
-their text reports. With both posteriors as numbers on one grid, the \
-comparison becomes arithmetic:"}],
+para[{"So the first step is to turn their figure back into numbers \
+\[LongDash] in Wolfram. Their Fig 3 carries tick marks at known latitudes \
+and longitudes, so the pixel grid can be georeferenced exactly (the \
+parallels are horizontal; the meridians converge northward at 35.85 \
+px/degree along the top frame and 42.15 along the bottom), and the filled \
+contour bands run along a blue\[Dash]cyan\[Dash]green\[Dash]yellow\[Dash]red \
+ramp that inverts analytically. ", mono["ImportItanFig3Density"],
+" in the package does all of this in about forty lines of image \
+processing; an independent Python implementation (", 
+mono["scripts/digitise_itan_fig3.py"], ") agrees with it to a mean \
+absolute difference of 0.002 on the unit ramp scale. Two caveats are \
+stated rather than hidden. First, the paper publishes no numeric colour \
+scale, so equal density spacing between contour bands is an assumption; \
+mode locations are robust to any monotone recolouring, but the overlap \
+statistics below are approximate. Second, the paper's text localises the \
+origin only qualitatively (\[OpenCurlyDoubleQuote]between the central \
+Balkans and central Europe\[CloseCurlyDoubleQuote]); the coordinate \
+48.5\[Degree]N, 14\[Degree]E quoted in this section is the mode of our \
+own georeferenced digitisation, not a number from their text. With both \
+posteriors as numbers on one grid, the comparison becomes arithmetic:"}],
 
-imgFileCell[FileNameJoin[{repoRoot, "figures", "generated",
-  "origin_hpd_comparison.png"}], 660],
+evalIn["OriginItanHPDComparisonMap[originSmc, Directory[]]"],
 
 captionCell["Highest-posterior-density contours for both analyses on \
 common axes \[LongDash] derived numeric contours only, no part of the \
@@ -820,14 +832,19 @@ has not corroborated any of them."],
 imgFileCell[FileNameJoin[{repoRoot, "docs", "images", "originals",
   "itan2009_fig3_origin_density.png"}], 620],
 
-captionCell["Reproduced from Itan Y, Powell A, Beaumont MA, Burger J, \
+captionCell["Figure 3 of: Itan Y, Powell A, Beaumont MA, Burger J, \
 Thomas MG (2009), \[OpenCurlyDoubleQuote]The Origins of Lactase \
-Persistence in Europe\[CloseCurlyDoubleQuote], PLoS Computational Biology \
-5(8): e1000491, Figure 3, under the Creative Commons Attribution licence. \
-Posterior density of the origin of the lactase-persistence/dairying \
-coevolution in their model: the mode sits near 48.5\[Degree]N, \
-13\[Degree]E and the high-density ridge extends toward the Carpathian \
-Basin \[LongDash] the \[OpenCurlyDoubleQuote]Hungary \
+Persistence in Europe\[CloseCurlyDoubleQuote], PLoS Computational \
+Biology 5(8): e1000491, doi:10.1371/journal.pcbi.1000491. \[Copyright] \
+2009 Itan et al., distributed under the Creative Commons Attribution \
+(CC BY) licence (creativecommons.org/licenses/by/4.0), which permits \
+unrestricted reproduction provided the original author and source are \
+credited. Reproduced here unmodified; separately, the figure was \
+digitised into the numeric density field used above (a derived work \
+under the same licence). It shows the posterior density of the origin \
+of the lactase-persistence/dairying coevolution in their demic model, \
+with the high-density region running from Bavaria/Bohemia toward the \
+Carpathian Basin \[LongDash] the \[OpenCurlyDoubleQuote]Hungary \
 result\[CloseCurlyDoubleQuote] of the popular retellings."],
 
 evalIn["originDraws = ResamplePosterior[originSmc, 2000];\nsTotal = Quantile[Map[#[\"SelectionBase\"] + #[\"SelectionDairying\"] &, originDraws], {0.025, 0.5, 0.975}];\noRow[p_] := SelectFirst[PosteriorParameterQuantiles[originSmc], #[\"Parameter\"] === p &];\nfq[p_, d_] := With[{q = oRow[p]}, {ToString[NumberForm[q[\"Median\"], {8, d}]],\n   \"[\" <> ToString[NumberForm[q[\"Lower95\"], {8, d}]] <> \", \" <> ToString[NumberForm[q[\"Upper95\"], {8, d}]] <> \"]\"}];\nGrid[\n {Style[#, Bold] & /@ {\"quantity\", \"this model\", \"95% interval\", \"published\", \"source\"},\n  Join[{\"origin latitude (\[Degree]N)\"}, fq[\"OriginLatitude\", 1], {\"\[TildeTilde]48.5 (mode)\", \"Itan 2009, Fig 3\"}],\n  Join[{\"origin longitude (\[Degree]E)\"}, fq[\"OriginLongitude\", 1], {\"\[TildeTilde]13 (mode)\", \"Itan 2009, Fig 3\"}],\n  Join[{\"origin date (years BP)\"}, fq[\"OriginTimeBP\", 0], {\"7441 [6256, 8683]\", \"Itan 2009\"}],\n  Join[{\"selection, dairying term\"}, fq[\"SelectionDairying\", 3], {\"0.0953 [0.0518, 0.159]\", \"Itan 2009 (dairyers)\"}],\n  {\"selection, total in dairying cells\", ToString[NumberForm[sTotal[[2]], {8, 3}]],\n   \"[\" <> ToString[NumberForm[sTotal[[1]], {8, 3}]] <> \", \" <> ToString[NumberForm[sTotal[[3]], {8, 3}]] <> \"]\",\n   \"0.014\[Dash]0.15\", \"Bersaglieri 2004\"},\n  {\"\", \"\", \"\", \"\[TildeTilde]0.06 (last 3 kyr)\", \"Burger 2020\"}},\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],

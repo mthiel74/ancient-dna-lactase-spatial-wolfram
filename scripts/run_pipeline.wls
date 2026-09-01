@@ -23,8 +23,10 @@ If[raw === $Failed, Exit[1]];
 
 Print["Parsing and processing rs4988235 sample data..."];
 processed = LactasePersistenceSpatial`WriteProcessedData[root, raw];
-samples = processed["CalledSamples"];
-Print["Called samples with age/location: " <> ToString[Length[samples]]];
+(* prefer the AADR v66 dataset when its processed file is present; the GLAD
+   pipeline above still runs so both processed files stay reproducible *)
+samples = LactasePersistenceSpatial`LoadProcessedSamples[root];
+Print["Active dataset samples (AADR v66 preferred): " <> ToString[Length[samples]]];
 
 Print["Fitting regional binomial logistic trajectories..."];
 fits = LactasePersistenceSpatial`FitAllRegionalLogistics[samples];

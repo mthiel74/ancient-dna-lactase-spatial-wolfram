@@ -76,7 +76,8 @@ ri = np.round(rr - TOP).astype(int)
 ok = (ci >= 0) & (ci < pw) & (ri >= 0) & (ri < ph)
 
 itan = np.full(GL.shape, np.nan)
-# average a small window to beat anti-aliasing and thin coastlines
+# nearest-valid fallback around each target pixel (first hit wins; NOT an
+# average): beats anti-aliased band boundaries and thin coastline ink
 for dy in (-2, -1, 0, 1, 2):
     for dx in (-2, -1, 0, 1, 2):
         cj = np.clip(ci + dx, 0, pw - 1); rj = np.clip(ri + dy, 0, ph - 1)
@@ -88,6 +89,14 @@ print(f"grid {GL.shape}, cells with digitised density: {land.sum()} of {land.siz
 
 np.savez(f"{REPO}/data/processed/itan2009_fig3_digitised.npz",
          lon=LON, lat=LAT, value=itan)
+with open(f"{REPO}/data/processed/itan2009_origin_density_digitised.csv", "w") as fh:
+    fh.write("Longitude,Latitude,RelativeDensity
+")
+    for i in range(len(LAT)):
+        for j in range(len(LON)):
+            if not np.isnan(itan[i, j]):
+                fh.write(f"{LON[j]:.2f},{LAT[i]:.2f},{itan[i,j]:.5f}
+")
 
 # ---------------------------------------------------------- our own posterior
 rows_p = list(csv.DictReader(open(f"{REPO}/data/processed/origin_smc_particles.csv")))
