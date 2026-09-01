@@ -374,3 +374,10 @@ The project is done when:
 - sensitivity to priors is documented
 - a calibrated animation is generated with uncertainty explicitly shown
 - the Wolfram Community narrative post and downloadable notebooks are ready
+
+## Licence
+
+Code (package, scripts, tests): [MIT](LICENSE). Text, figures, and the
+notebook: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+(attribution: Marco Thiel, link to this repository). Third-party data terms:
+see [DATA_LICENCES.md](DATA_LICENCES.md).
