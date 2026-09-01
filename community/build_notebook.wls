@@ -341,17 +341,25 @@ writeAll[{
 
 hd1["1.  Setup and data"],
 
-para[{"The raw data are the public GLAD ancient-genotype workbook (Global \
-Lactase persistence Association Database), derived from the Allen Ancient DNA \
-Resource v44.3 and used for the Evershed et al. (2022) analysis. ",
-  mono["RetrieveRawData"], " downloads it once, records a SHA-256 checksum \
-and a provenance manifest, and marks the file read-only; ",
-  mono["WriteProcessedData"], " parses, cleans, and writes tidy CSVs with \
-provenance attached."}],
+para[{"Two data sources, one loader. The historical source is the public \
+GLAD ancient-genotype workbook (Global Lactase persistence Association \
+Database), derived from the Allen Ancient DNA Resource v44.3 and used for \
+the Evershed et al. (2022) analysis; ", mono["RetrieveRawData"],
+" downloads it once with a SHA-256 checksum and provenance manifest, and ",
+mono["WriteProcessedData"], " parses it into tidy CSVs. The ", ital["active"],
+" dataset is newer: rs4988235 extracted for every individual in the current \
+AADR v66.p1 release (see ", mono["scripts/extract_aadr_v66_rs4988235.py"],
+" and ", mono["scripts/ingest_aadr_v66.wls"], " in the repository), \
+deduplicated to one record per individual and validated against the GLAD \
+genotypes where the two overlap (796 of 797 strict homozygotes concordant). ",
+mono["LoadProcessedSamples"], " prefers the v66 file automatically \
+whenever it is present \[LongDash] including the copy that ships beside \
+this notebook \[LongDash] so the counts below show both generations of \
+the data:"}],
 
 evalInSilent["nbdir = NotebookDirectory[];\n(* LactasePersistenceSpatial.wl ships next to this notebook; inside the\n   full repository the src/ copy and the repo data layout are used *)\nroot = If[FileExistsQ[FileNameJoin[{ParentDirectory[nbdir], \"src\", \"LactasePersistenceSpatial.wl\"}]],\n   ParentDirectory[nbdir], nbdir];\nSetDirectory[root];\nGet[First[Select[\n   {FileNameJoin[{nbdir, \"LactasePersistenceSpatial.wl\"}],\n    FileNameJoin[{root, \"src\", \"LactasePersistenceSpatial.wl\"}]}, FileExistsQ]]];"],
 
-evalIn["raw = RetrieveRawData[Directory[]];\nprocessed = WriteProcessedData[Directory[], raw];\nsamples = processed[\"CalledSamples\"];\nLength[samples]"],
+evalIn["raw = RetrieveRawData[Directory[]];\nprocessed = WriteProcessedData[Directory[], raw];\nsamples = LoadProcessedSamples[Directory[]];\n<|\"GLAD (AADR v44.3) called samples\" -> Length[processed[\"CalledSamples\"]],\n  \"active dataset (AADR v66.p1)\" -> Length[samples]|>"],
 
 para[{"Parsing ancient genotypes is where silent errors live, so the cleaning \
 rules are explicit and tested: genotype strings are normalized so that A \
