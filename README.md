@@ -26,9 +26,9 @@ Repository target: `mthiel74/ancient-dna-lactase-spatial-wolfram`
 
 *Forward simulation from the fitted origin: the travelling wave, 9600 BP to the present (star: posterior modal origin). H.264 video: [origin_spread.mp4](figures/generated/origin_spread.mp4).*
 
-![Model vs Itan et al. 2009](figures/generated/origin_comparison_side_by_side.png)
+![HPD comparison against Itan et al. 2009](figures/generated/origin_hpd_comparison.png)
 
-*Side by side with the published record: our ancient-genotype-only posterior (left) against Figure 3 of Itan et al. 2009 (right; PLoS Comp Biol, CC-BY), which used archaeological dates and modern frequencies instead. Independent inputs, overlapping answers - at very different sharpness, which is exactly what the information content of each dataset should produce. Full quantitative comparison (including Bersaglieri 2004 and Burger 2020 selection coefficients and 1000 Genomes present-day frequencies) in section 11 of the community notebook.*
+*The quantitative comparison, on common axes. Itan et al. 2009's Fig 3 was digitised back into a numeric density field (`scripts/digitise_itan_fig3.py`; the recovered mode, 48.5N 14.0E, matches the 48.5N 13E their text reports, which validates the georeferencing), so the two posteriors can be compared as distributions rather than as pictures. The verdict is split and section 11 of the notebook states it plainly: **timing and selection strength agree with the published record; location does not.** Bhattacharyya coefficient 0.62; we place only 0.10 of our mass inside their 50% region and 0.36 inside their 95% region. Their distribution sits inside our 95% region, but that reflects how vague we are, not how right - a posterior wide enough to contain every rival hypothesis has corroborated none of them. The origin's *date* (~7,200 BP) is well identified and does agree with both Itan et al. and the imputed-genome time series of Irving-Pease et al. 2024.*
 
 ![Regional logistic reproduction with Wilson intervals](figures/generated/regional_logistic_reproduction.png)
 

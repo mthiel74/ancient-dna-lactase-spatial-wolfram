@@ -1,0 +1,12 @@
+Estimator,Bandwidth,ModeLatitude,ModeLongitude
+"weighted, all 800",1.6/1.2,52.5,10.0
+"weighted, all 800",2.0/1.6,44.5,-0.5
+"weighted, all 800",2.6/2.0,44.0,-0.5
+"weighted, all 800",3.2/2.6,44.0,-0.5
+"weighted, all 800",4.0/3.2,43.0,-0.5
+"resampled 400, seed 0",2.6/2.0,52.0,10.0
+"resampled 400, seed 1",2.6/2.0,52.0,10.0
+"resampled 400, seed 2",2.6/2.0,44.5,-0.5
+"resampled 400, seed 3",2.6/2.0,44.5,-1.0
+"resampled 400, seed 4",2.6/2.0,39.5,-4.5
+"resampled 400, seed 5",2.6/2.0,44.0,-0.5
