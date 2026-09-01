@@ -250,3 +250,58 @@ VerificationTest[
   5,
   TestID -> "resample-posterior-count"
 ]
+
+VerificationTest[
+  Module[{grid, samples, lidx, params, ll, traj, p, q, k, n},
+    grid = LactasePersistenceSpatial`BuildEuropeGrid[8];
+    samples = Flatten@Table[
+      <|"HasCall" -> True, "Latitude" -> lat, "Longitude" -> lon, "MeanDateBP" -> bp,
+        "CalledAlleles" -> 2, "DerivedAlleles" -> If[bp < 4000, 1, 0],
+        "Region" -> LactasePersistenceSpatial`AssignRegion["", lat, lon]|>,
+      {lat, {42., 50., 56.}}, {lon, {0., 12.}}, {bp, {2600., 5400., 7400.}}
+    ];
+    lidx = LactasePersistenceSpatial`LikelihoodIndex[samples, grid];
+    params = <|"InitialFrequency" -> 0.01, "SelectionBase" -> 0.005, "SelectionDairying" -> 0.02,
+      "Migration" -> 0.05, "CallErrorRate" -> 0.001|>;
+    ll = LactasePersistenceSpatial`SampleLogLikelihood[params, grid, lidx];
+    (* independent recomputation of the same quantity *)
+    traj = LactasePersistenceSpatial`SimulateSpatialTrajectory[params, grid];
+    p = Extract[traj["Frequencies"], lidx["Positions"]];
+    q = p (1 - 2 0.001) + 0.001; k = lidx["Derived"]; n = lidx["Called"];
+    lidx["SampleCount"] == 18 && NumericQ[ll] && ll < 0 &&
+      Abs[ll - Total[k Log[q] + (n - k) Log[1 - q]]] < 10^-9
+  ],
+  True,
+  TestID -> "exact-likelihood-matches-binomial"
+]
+
+VerificationTest[
+  Module[{p1, p2, p3},
+    (* h = 1: selection vanishes as p -> 1; h = 0.5 with 2s is the haploid logistic to first order *)
+    p1 = LactasePersistenceSpatial`DominanceGrowth[{0.999}, {0.05}, 1., 9];
+    p2 = LactasePersistenceSpatial`DominanceGrowth[{0.3}, {0.02}, 0.5, 9];
+    p3 = With[{g = Exp[9 0.01]}, 0.3 g/(1 + 0.3 (g - 1))];
+    p1[[1]] < 0.99901 && Abs[p2[[1]] - p3] < 5 10^-4
+  ],
+  True,
+  TestID -> "dominance-growth-limits"
+]
+
+VerificationTest[
+  Module[{grid, samples, mcmc},
+    grid = LactasePersistenceSpatial`BuildEuropeGrid[8];
+    samples = Flatten@Table[
+      <|"HasCall" -> True, "Latitude" -> lat, "Longitude" -> lon, "MeanDateBP" -> bp,
+        "CalledAlleles" -> 4, "DerivedAlleles" -> If[bp < 4000, 2, 0],
+        "Region" -> LactasePersistenceSpatial`AssignRegion["", lat, lon]|>,
+      {lat, {42., 50., 56.}}, {lon, {0., 12.}}, {bp, {2600., 5400., 7400.}}
+    ];
+    mcmc = LactasePersistenceSpatial`RunMCMC[samples, grid, "Iterations" -> 60, "Burn" -> 20,
+      "Thin" -> 2, "Seed" -> 11, "AdaptAfter" -> 10, "AdaptEvery" -> 10];
+    mcmc["Method"] === "MCMC" && Length[mcmc["Particles"]] == 20 &&
+      Length[mcmc["LogPosterior"]] == 20 && 0 <= First[mcmc["AcceptanceHistory"]] <= 1 &&
+      Abs[Total[mcmc["Weights"]] - 1.] < 10^-8
+  ],
+  True,
+  TestID -> "mcmc-smoke"
+]

@@ -1,0 +1,5 @@
+"Region","PosteriorMass","ConstrainedPriorMass"
+"WestOf5E",0,0.2726
+"CentralEurope",0.8975,0.0954
+"Carpathian",0,0.0335
+"Scandinavia",0,0.1612

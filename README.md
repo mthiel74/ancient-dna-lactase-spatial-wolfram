@@ -30,6 +30,14 @@ Repository target: `mthiel74/ancient-dna-lactase-spatial-wolfram`
 
 *The quantitative comparison, on common axes, now generated natively in Wolfram inside the notebook: `ImportItanFig3Density` digitises Itan et al. 2009's Fig 3 back into a numeric field (georeferenced from the figure's own axis ticks; an independent Python implementation in `scripts/digitise_itan_fig3.py` agrees to a mean absolute difference of 0.002), and `OriginItanHPDComparisonMap` draws both HPD contour sets. The 48.5N/14E "Itan mode" is the mode of our digitisation - their text localises the origin only qualitatively. The verdict, measured against the constrained prior that is the only fair baseline (section 11): **the origin date tracks the archaeology-driven prior rather than the genetics; total selection strength is a modest genuine finding (the weak tail is excluded); location is not identified** - the one real update is westward (mass west of 5E doubles from the prior's 27% to ~58%, +/-8% Monte Carlo), which must be read alongside unremoved westward biases, and the Carpathian box is genuinely undetermined (prior 3.4%, posterior bounded only below ~8% at ESS 36). The overlap statistics are computed live in the notebook with Monte Carlo error acknowledged (the SMC effective sample sizes are small, and every overlap number inherits that).*
 
+![Exact-likelihood origin posterior](figures/generated/origin_mcmc_density.png)
+
+*v3 - the exact likelihood. The simulator is deterministic and every ancient individual is a binomial draw from the simulated frequency at its own cell and date, so the likelihood is exact and costs one forward run (0.05 s): `LikelihoodIndex` + `SampleLogLikelihood`, sampled by adaptive Metropolis MCMC (`RunMCMC`, `LoadOrRunOriginMCMC`; 3 chains x 30,000 iterations). No summary statistics, no tolerance schedule, no importance-weight degeneracy. The point-source posterior collapses from the ABC cloud onto the Alpine foreland (chains at 48.0N/10.4E, 45.3N/9.6E, 44.7N/10.2E; T ~ 9,300 BP) - and it does so while pushing Migration, DairyingLeadYears and OriginTimeBP onto their prior bounds and with split-Rhat of 2-7 on the selection multipliers. The map is what a misspecified model does when it is forced to be sharp, not a discovery; see the next figure.*
+
+![Where the point-source model loses](figures/generated/likelihood_residual_heatmap.png)
+
+*The deviance ladder on the same 6,184 in-era samples (`DevianceLadder`): constant frequency -3891 (1 parameter); five independent regional logistic curves -2756 (10); **spatial standing-variation model (allele everywhere at 10 kyr BP, smooth gradient) -2695 (11)**; spatial point-source model -2796 (13); saturated -2185 (1,051 occupied time x cell bins). A single origin plus a diffusion wave is a worse description of these data than five unrelated curves, and ~100 nats worse than standing variation with two fewer parameters. The heat map (`LikelihoodResidualTable`, `ResidualHeatmap`) shows where: the wave wins +82 nats in Rhine-Danube (3,300+ samples resolve real within-region structure) and loses -64 in the British Isles and -47 in the Baltic, almost all at 1-2 kyr BP, where the model's continental-arrival gradient across Britain runs against samples in which the periphery is already high. A chain with diploid dominance h free (`DominanceGrowth`, `scripts/run_origin_mcmc_dominance.wls`) does not rescue the point-source model (MAP -2801.5 with 14 parameters) even though the data take the offered dominance (h ~ 0.98) - and it moves the origin to 53.0N/4.4E at ~7,560 BP: a location that jumps 500 km when the selection recursion changes is a property of the model, not of the allele. Section 12 of the notebook carries the full argument; the conclusion is that location is "identified" by the exact likelihood only inside a model the same likelihood rejects.*
+
 ![Regional logistic reproduction with Wilson intervals](figures/generated/regional_logistic_reproduction.png)
 
 *Observed regional binned frequencies (points sized by called-allele count, 95% Wilson intervals) with fitted binomial logistic trajectories.*
@@ -63,6 +71,7 @@ This repository now contains a runnable Wolfram Language baseline for the full w
 - fit regional published-style logistic trajectories
 - run a coarse Europe grid diffusion/selection spatial model
 - fit the spatial model with SMC-ABC: adaptive tolerance schedule, Gaussian perturbation kernels, importance weights, and ESS tracking, using regional time-binned frequencies plus spatial-gradient summary statistics
+- fit the same spatial models with the exact per-sample binomial likelihood by adaptive Metropolis MCMC (v3), with a deviance ladder against regional-logistic and saturated baselines, split-Rhat convergence diagnostics, and a region x millennium residual decomposition
 - generate posterior predictive checks, held-out-region and held-out-time-slice validation, prior and dairying-onset sensitivity scenarios, kriged geographic maps, GIF animation, and MP4 video
 - copy every generated animation/video version to Marco's iCloud Codex folder with timestamped filenames
 
@@ -75,13 +84,16 @@ Run from the repository root:
 ```bash
 wolframscript -file scripts/retrieve_data.wls
 wolframscript -file scripts/run_pipeline.wls --particles 400 --generations 5 --cv-particles 150 --cv-generations 4
+wolframscript -file scripts/run_origin_mcmc.wls 30000 10000        # exact-likelihood origin chain (~25 min)
+wolframscript -file scripts/run_origin_mcmc_chain.wls 2718           # extra chains for split-Rhat
+wolframscript -file scripts/run_origin_mcmc_chain.wls 1618
+wolframscript -file scripts/run_main_mcmc.wls 314159                 # standing-variation model, exact likelihood
+wolframscript -file scripts/run_main_mcmc.wls 2718
+wolframscript -file scripts/export_v3_figures.wls                    # ladder, residuals, convergence, figures
 wolframscript -file scripts/run_tests.wls
 ```
 
 For a faster smoke run, lower `--particles`, `--generations`, and `--cv-particles`; pass `--sensitivity 0` to skip the sensitivity scenarios.
-
-## Continuous Integration Note
-
 
 ## Generated Outputs
 
@@ -292,11 +304,7 @@ Test coverage must include:
 - ABC distance calculations
 - visualization helper functions that prepare map layers and animation frames
 
-Continuous integration:
-
-- CI should run parser tests, model-component tests, and visualization-helper tests.
-- CI should not require private data or interactive notebooks.
-- CI should use small fixture datasets committed under `tests/fixtures/`.
+Tests run locally with `wolframscript -file scripts/run_tests.wls` (27 VerificationTests, small fixtures under `tests/fixtures/`); there is no hosted CI.
 
 ## Repository Structure
 
@@ -312,8 +320,6 @@ tests/
 figures/
 community/
 docs/
-.github/
-  workflows/
 ```
 
 Folder roles:
@@ -326,7 +332,6 @@ Folder roles:
 - `figures/`: generated plots, maps, and animation frames.
 - `community/`: the buildable Wolfram Community notebook (`build_notebook.wls`), the built `.nb`, and its PDF export.
 - `docs/`: narrative notes, Wolfram Community post draft, and exported documentation assets.
-- `.github/workflows/`: non-interactive CI configuration.
 
 ## Data Retrieval Notebook
 

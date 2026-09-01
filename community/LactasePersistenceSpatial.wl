@@ -34,6 +34,20 @@ WriteRunSummary::usage = "WriteRunSummary[root, outputs] writes a Markdown run s
 
 RunSMCABC::usage = "RunSMCABC[samples, grid] runs sequential Monte Carlo ABC with adaptive tolerances, Gaussian perturbation kernels, importance weights, and spatial-gradient summary statistics.";
 ResamplePosterior::usage = "ResamplePosterior[smc, n] draws n equally weighted posterior parameter sets from a weighted SMC result.";
+LikelihoodIndex::usage = "LikelihoodIndex[samples, grid] precomputes, for every in-era called sample, its (time step, cell) position and its called/derived counts for the exact binomial likelihood.";
+SampleLogLikelihood::usage = "SampleLogLikelihood[params, grid, lidx] returns the exact per-sample binomial log-likelihood of the deterministic simulator at params (with genotype-error channel e) given a LikelihoodIndex.";
+RunMCMC::usage = "RunMCMC[samples, grid, opts] runs adaptive Metropolis MCMC on the exact per-sample likelihood in unbounded (logit) coordinates and returns an SMC-compatible posterior association with uniform weights.";
+RunOriginMCMC::usage = "RunOriginMCMC[samples, grid, opts] is RunMCMC with the point-source origin prior $OriginPriorSpec.";
+LoadOrRunOriginMCMC::usage = "LoadOrRunOriginMCMC[root, samples, grid, opts] reloads the stored origin-model MCMC chain or runs and stores it.";
+OriginSupportQ::usage = "OriginSupportQ[params, grid] is True when the origin lies within 1.6 deg of a land cell and does not precede local dairying onset by more than DairyingLeadYears.";
+AutocorrelationESS::usage = "AutocorrelationESS[series] estimates the effective sample size of a Markov chain series from its initial positive autocorrelations.";
+DominanceGrowth::usage = "DominanceGrowth[freqs, s, h, gens] advances allele frequencies over gens generations under diploid selection with dominance h (fitnesses 1, 1+hs, 1+s).";
+DevianceLadder::usage = "DevianceLadder[samples, grid, <|name -> params, ...|>] returns the exact log-likelihood of the constant, five-regional-logistic, each supplied spatial model, and the saturated model on the same in-era samples.";
+LikelihoodResidualTable::usage = "LikelihoodResidualTable[samples, grid, params] decomposes, by region and millennium, the log-likelihood of the spatial model at params minus that of independent regional logistic curves.";
+ResidualHeatmap::usage = "ResidualHeatmap[rows] renders a LikelihoodResidualTable as a region \[Times] millennium heat map.";
+McmcConvergenceTable::usage = "McmcConvergenceTable[files] computes split-Rhat, pooled ESS and per-chain medians from stored MCMC chain CSV files.";
+RegionalLogisticMLE::usage = "RegionalLogisticMLE[lidx, grid] fits independent logistic-in-time curves per region by maximum likelihood on the samples of a LikelihoodIndex.";
+$LikelihoodTimes::usage = "$LikelihoodTimes is the list of simulator time steps (years BP) used to place samples in the exact likelihood.";
 PosteriorCellStats::usage = "PosteriorCellStats[posterior, grid, times] returns per-cell posterior mean and 95% band of the simulated allele frequency at each requested time BP.";
 PosteriorParameterQuantiles::usage = "PosteriorParameterQuantiles[smc] returns weighted posterior quantiles for every model parameter.";
 ExportSMCOutputs::usage = "ExportSMCOutputs[root, samples, grid, smc, draws] writes SMC posterior tables, diagnostics, and figures.";
@@ -642,7 +656,12 @@ SpatialStep[freqs_List, grid_List, neighbors_List, params_Association, bp_?Numer
   multipliers = RegionSelectionMultiplier[params, #] & /@ grid[[All, "Region"]];
   (* exact per-step logistic growth: stable and accurate for any s*gens *)
   growth = Exp[gens (sBase + sDairy dairy multipliers)];
-  grown = freqs growth/(1. + freqs (growth - 1.));
+  grown = If[KeyExistsQ[params, "Dominance"],
+    (* diploid recursion with dominance h: fitnesses 1, 1+hs, 1+s; LP is
+       phenotypically dominant (h -> 1), so selection fades as the
+       non-persistent homozygote becomes rare and p plateaus below 1 *)
+    DominanceGrowth[freqs, sBase + sDairy dairy multipliers, params["Dominance"], gens],
+    freqs growth/(1. + freqs (growth - 1.))];
   (* exponential mixing toward the neighbour mean: stable for any m*gens *)
   alphaMix = 1. - Exp[-gens migration];
   mixed = Table[
@@ -651,6 +670,17 @@ SpatialStep[freqs_List, grid_List, neighbors_List, params_Association, bp_?Numer
     {i, Length[grown]}
   ];
   Clip[mixed, {0., 0.999999}]
+];
+
+DominanceGrowth[freqs_List, s_List, h_?NumericQ, gens_?NumericQ] := Module[
+  {p = freqs, nSub = Max[1, Round[gens]], sg, wbar, dp},
+  sg = s gens/nSub;   (* per-substep selection coefficient *)
+  Do[
+    wbar = 1. + sg (2 h p (1. - p) + p^2);
+    dp = sg p (1. - p) (h + (1. - 2. h) p)/wbar;
+    p = Clip[p + dp, {0., 1.}],
+    {nSub}];
+  p
 ];
 
 Options[SimulateSpatialTrajectory] = {"StartBP" -> 10000, "EndBP" -> 0, "TimeStepYears" -> 250};
@@ -2543,6 +2573,262 @@ OriginItanHPDComparisonMap[smc_Association, root_String] := Module[
   outFile = FileNameJoin[{root, "figures", "generated", "origin_hpd_comparison.png"}];
   Export[outFile, fig, ImageResolution -> 144];
   fig
+];
+
+(* ------------------------------------------------------------------ *)
+(* v3: EXACT LIKELIHOOD + ADAPTIVE METROPOLIS                          *)
+(* The simulator is deterministic and the data are binomial counts,   *)
+(* so the likelihood is exact and cheap: one forward simulation gives  *)
+(* p at every cell and step, and every one of the ~6,000 in-era        *)
+(* samples enters at its own cell and date.  No summary statistics,   *)
+(* no tolerance schedule, no importance-weight degeneracy.             *)
+(* ------------------------------------------------------------------ *)
+
+$LikelihoodTimes = Range[10000, 0, -250];
+
+LikelihoodIndex[samples_List, grid_List] := Module[{idx},
+  idx = BuildObservationIndex[samples, grid];
+  <|"Positions" -> ({First @ Ordering[Abs[$LikelihoodTimes - #["TimeBP"]], 1],
+        #["CellIndex"]} & /@ idx),
+    "Called" -> N[idx[[All, "Called"]]],
+    "Derived" -> N[idx[[All, "Derived"]]],
+    "SampleCount" -> Length[idx]|>
+];
+
+SampleLogLikelihood[params_Association, grid_List, lidx_Association] := Module[
+  {traj, p, e, q, k, n},
+  traj = SimulateSpatialTrajectory[params, grid];
+  p = Extract[traj["Frequencies"], lidx["Positions"]];
+  e = Lookup[params, "CallErrorRate", 0.];
+  q = Clip[p (1 - 2 e) + e, {10.^-9, 1 - 10.^-9}];
+  k = lidx["Derived"]; n = lidx["Called"];
+  Total[k Log[q] + (n - k) Log[1 - q]]
+];
+
+(* support constraints shared with the ABC path: origin on land, origin not
+   earlier than local dairying onset plus the (fitted) lead *)
+OriginSupportQ[params_Association, grid_List] := Module[
+  {originPt, gridPts, originIdx, dOrigin, onsetGap},
+  If[! KeyExistsQ[params, "OriginTimeBP"], Return[True]];
+  originPt = {params["OriginLatitude"], params["OriginLongitude"] Cos[params["OriginLatitude"] Degree]};
+  gridPts = ({#["Latitude"], #["Longitude"] Cos[#["Latitude"] Degree]} & /@ grid);
+  originIdx = First @ Nearest[gridPts -> "Index", originPt];
+  dOrigin = EuclideanDistance[originPt, gridPts[[originIdx]]];
+  If[dOrigin > 1.6, Return[False]];
+  onsetGap = params["OriginTimeBP"] - grid[[originIdx]]["DairyingOnsetBP"] -
+    Lookup[params, "DairyingLeadYears", $OriginDairyingLeadYears];
+  onsetGap <= 0
+];
+
+(* log density of the standard logistic prior in the unbounded coordinates,
+   in an underflow-safe form: log f(y) = -|y| - 2 log(1 + e^{-|y|}) *)
+LogLogisticPriorDensity[y_List] := Total[-Abs[y] - 2 Log[1 + Exp[-Abs[y]]]];
+
+AutocorrelationESS[series_List] := Module[{n = Length[series], m, v, rho, k, s = 0.},
+  m = Mean[series]; v = Variance[series];
+  If[v <= 0, Return[N[n]]];
+  k = 1;
+  While[k < Min[n/2, 200],
+    rho = Mean[(series[[;; n - k]] - m) (series[[k + 1 ;;]] - m)]/v;
+    If[rho < 0.05, Break[]];
+    s += rho; k++];
+  n/(1 + 2 s)
+];
+
+Options[RunMCMC] = {
+  "Iterations" -> 20000, "Burn" -> 5000, "Thin" -> 5, "Seed" -> 314159,
+  "PriorSpec" -> Automatic, "AdaptEvery" -> 100, "AdaptAfter" -> 500,
+  "ProgressFunction" -> None
+};
+
+RunMCMC[samples_List, grid_List, OptionsPattern[]] := Module[
+  {spec, keys, d, lidx, iters, burn, thin, seed, adaptEvery, adaptAfter, progress,
+   logTarget, y, lp, cov, scale, history, chain, chainLP, accepted = 0, tries = 0,
+   proposal, yNew, lpNew, xs, particles, ess, support, x0, n0},
+  spec = If[OptionValue["PriorSpec"] === Automatic, $PriorSpec, OptionValue["PriorSpec"]];
+  keys = Keys[spec]; d = Length[keys];
+  lidx = LikelihoodIndex[samples, grid];
+  iters = OptionValue["Iterations"]; burn = OptionValue["Burn"]; thin = OptionValue["Thin"];
+  seed = OptionValue["Seed"]; adaptEvery = OptionValue["AdaptEvery"];
+  adaptAfter = OptionValue["AdaptAfter"]; progress = OptionValue["ProgressFunction"];
+  support[x_List] := OriginSupportQ[ParamsFromVector[x, spec], grid];
+  logTarget[yv_List] := Module[{x = FromUnboundedVector[yv, spec]},
+    If[! support[x], -Infinity,
+      SampleLogLikelihood[ParamsFromVector[x, spec], grid, lidx] + LogLogisticPriorDensity[yv]]];
+  BlockRandom[
+    SeedRandom[seed];
+    (* start from a supported prior draw *)
+    n0 = 0;
+    While[n0 < 10000, x0 = PriorVectorSample[spec]; n0++; If[support[x0], Break[]]];
+    y = ToUnboundedVector[x0, spec];
+    lp = logTarget[y];
+    cov = IdentityMatrix[d] 0.05; scale = 1.;
+    history = {y}; chain = {}; chainLP = {};
+    Do[
+      proposal = RandomVariate[MultinormalDistribution[ConstantArray[0., d], scale cov]];
+      yNew = y + proposal; tries++;
+      lpNew = logTarget[yNew];
+      If[lpNew > -Infinity && Log[RandomReal[]] < lpNew - lp,
+        y = yNew; lp = lpNew; accepted++];
+      AppendTo[history, y];
+      If[i > adaptAfter && Mod[i, adaptEvery] == 0,
+        cov = (2.38^2/d) Covariance[history] + 10.^-6 IdentityMatrix[d];
+        (* nudge the global scale toward ~25% acceptance *)
+        scale = scale Exp[0.5 (accepted/tries - 0.25)]];
+      If[i > burn && Mod[i, thin] == 0, AppendTo[chain, y]; AppendTo[chainLP, lp]];
+      If[progress =!= None && Mod[i, 1000] == 0, progress[i, N[accepted/tries], lp]],
+      {i, iters}]
+  ];
+  xs = FromUnboundedVector[#, spec] & /@ chain;
+  particles = ParamsFromVector[#, spec] & /@ xs;
+  ess = Min[AutocorrelationESS /@ Transpose[chain]];
+  <|
+    "Method" -> "MCMC",
+    "ParticleVectors" -> xs,
+    "Particles" -> particles,
+    "Weights" -> ConstantArray[1./Length[xs], Length[xs]],
+    "ParameterKeys" -> keys,
+    "PriorSpecUsed" -> spec,
+    "LogPosterior" -> chainLP,
+    "AcceptanceHistory" -> {N[accepted/tries]},
+    "EpsilonHistory" -> {},
+    "ESSHistory" -> {ess},
+    "TotalSimulations" -> tries,
+    "GenerationShortfall" -> False,
+    "SampleCount" -> lidx["SampleCount"]
+  |>
+];
+
+RunOriginMCMC[samples_List, grid_List, opts___] :=
+  RunMCMC[samples, grid, "PriorSpec" -> $OriginPriorSpec, opts];
+
+LoadOrRunOriginMCMC[root_String, samples_List, grid_List, opts___] := Module[
+  {file, meta, fp, rows, spec, keys, xs, mcmc},
+  file = FileNameJoin[{root, "data", "processed", "origin_mcmc_chain.csv"}];
+  meta = file <> ".meta.json";
+  fp = CacheFingerprint[samples, grid, $OriginPriorSpec];
+  If[! (FileExistsQ[file] && CacheValidQ[meta, fp]),
+    mcmc = RunOriginMCMC[samples, grid, opts];
+    ExportRows[file, MapThread[Append[#1, "LogPosterior" -> #2] &,
+      {mcmc["Particles"], mcmc["LogPosterior"]}]];
+    WriteCacheMeta[meta, fp];
+    Return[mcmc]];
+  rows = Map[Association, Normal[Import[file, "Dataset", HeaderLines -> 1]]];
+  spec = $OriginPriorSpec; keys = Keys[spec];
+  xs = Map[Function[row, Table[
+      If[StringStartsQ[k, "Log10"], Log10[row[StringDrop[k, 5]]], row[k]], {k, keys}]], rows];
+  <|"Method" -> "MCMC", "ParticleVectors" -> xs,
+    "Particles" -> (KeyDrop[#, "LogPosterior"] & /@ rows),
+    "Weights" -> ConstantArray[1./Length[xs], Length[xs]],
+    "ParameterKeys" -> keys, "PriorSpecUsed" -> spec,
+    "LogPosterior" -> rows[[All, "LogPosterior"]],
+    "AcceptanceHistory" -> {Missing["LoadedFromDisk"]}, "EpsilonHistory" -> {},
+    "ESSHistory" -> {Min[AutocorrelationESS /@ Transpose[xs]]},
+    "TotalSimulations" -> Missing["LoadedFromDisk"], "GenerationShortfall" -> False|>
+];
+
+
+(* ---------- v3 diagnostics: deviance ladder and residual decomposition ---------- *)
+
+RegionalLogisticMLE[lidx_Association, grid_List] := Module[
+  {k, n, regionOf, posReg, posT, qReg, fits},
+  k = lidx["Derived"]; n = lidx["Called"];
+  regionOf = #["Region"] & /@ grid;
+  posReg = regionOf[[#[[2]]]] & /@ lidx["Positions"];
+  posT = $LikelihoodTimes[[#[[1]]]] & /@ lidx["Positions"];
+  qReg = ConstantArray[0., Length[k]]; fits = <||>;
+  Do[Module[{sel = Flatten[Position[posReg, r]], kk, nn, tt, a, b, sol, nll},
+     kk = k[[sel]]; nn = n[[sel]]; tt = posT[[sel]]/1000.;
+     nll[aa_?NumericQ, bb_?NumericQ] := -Total[kk Log[LogisticSigmoid[aa - bb tt]] +
+        (nn - kk) Log[1 - LogisticSigmoid[aa - bb tt]]];
+     sol = Quiet[FindMinimum[nll[a, b], {{a, -2}, {b, 0.5}}]];
+     fits[r] = {a, b} /. sol[[2]];
+     qReg[[sel]] = LogisticSigmoid[fits[r][[1]] - fits[r][[2]] tt]],
+    {r, Union[posReg]}];
+  <|"PredictedQ" -> qReg, "Fits" -> fits, "Regions" -> posReg, "TimesBP" -> posT,
+    "LogLikelihood" -> Total[k Log[qReg] + (n - k) Log[1 - qReg]]|>
+];
+
+PredictedQ[params_Association, grid_List, lidx_Association] := Module[{traj, p, e},
+  traj = SimulateSpatialTrajectory[params, grid];
+  p = Extract[traj["Frequencies"], lidx["Positions"]];
+  e = Lookup[params, "CallErrorRate", 0.];
+  Clip[p (1 - 2 e) + e, {10.^-9, 1 - 10.^-9}]
+];
+
+DevianceLadder[samples_List, grid_List, models_Association] := Module[
+  {lidx, k, n, agg, satLL, constLL, reg, rows},
+  lidx = LikelihoodIndex[samples, grid];
+  k = lidx["Derived"]; n = lidx["Called"];
+  agg = GroupBy[Transpose[{lidx["Positions"], k, n}], First -> Rest, Total];
+  satLL = Total[Map[Function[{kn}, With[{kk = kn[[1]], nn = kn[[2]]},
+    If[kk == 0 || kk == nn, 0., kk Log[kk/nn] + (nn - kk) Log[1 - kk/nn]]]], Values[agg]]];
+  constLL = With[{pbar = Total[k]/Total[n]}, Total[k] Log[pbar] + (Total[n] - Total[k]) Log[1 - pbar]];
+  reg = RegionalLogisticMLE[lidx, grid];
+  rows = Join[
+    {<|"Model" -> "constant frequency", "FreeParameters" -> 1, "LogLikelihood" -> constLL|>,
+     <|"Model" -> "five independent regional logistics", "FreeParameters" -> 2 Length[Union[reg["Regions"]]],
+       "LogLikelihood" -> reg["LogLikelihood"]|>},
+    KeyValueMap[<|"Model" -> #1, "FreeParameters" -> Length[#2],
+       "LogLikelihood" -> SampleLogLikelihood[#2, grid, lidx]|> &, models],
+    {<|"Model" -> "saturated (one free p per occupied time \[Times] cell)", "FreeParameters" -> Length[agg],
+       "LogLikelihood" -> satLL|>}];
+  Map[Append[#, "DevianceExplained" -> (#["LogLikelihood"] - constLL)/(satLL - constLL)] &, rows]
+];
+
+LikelihoodResidualTable[samples_List, grid_List, params_Association] := Module[
+  {lidx, k, n, qModel, reg, qReg, llModel, llReg, kyr, regions},
+  lidx = LikelihoodIndex[samples, grid];
+  k = lidx["Derived"]; n = lidx["Called"];
+  qModel = PredictedQ[params, grid, lidx];
+  reg = RegionalLogisticMLE[lidx, grid]; qReg = reg["PredictedQ"];
+  llModel = k Log[qModel] + (n - k) Log[1 - qModel];
+  llReg = k Log[qReg] + (n - k) Log[1 - qReg];
+  kyr = Floor[reg["TimesBP"]/1000]; regions = reg["Regions"];
+  Flatten[Table[Module[{sel = Flatten[Position[Transpose[{regions, kyr}], {r, t}]]},
+    If[sel === {}, Nothing,
+     <|"Region" -> r, "MillenniumBP" -> t, "Samples" -> Length[sel],
+       "Called" -> Total[n[[sel]]], "Derived" -> Total[k[[sel]]],
+       "ObservedFreq" -> N[Total[k[[sel]]]/Total[n[[sel]]]],
+       "ModelFreq" -> N[Total[n[[sel]] qModel[[sel]]]/Total[n[[sel]]]],
+       "RegionalLogisticFreq" -> N[Total[n[[sel]] qReg[[sel]]]/Total[n[[sel]]]],
+       "LLModelMinusLogistic" -> Total[llModel[[sel]]] - Total[llReg[[sel]]]|>]],
+   {r, Union[regions]}, {t, 0, 9}]]
+];
+
+ResidualHeatmap[rows_List] := Module[{regions, ts, m, lim},
+  regions = Union[rows[[All, "Region"]]]; ts = Range[0, 9];
+  m = Table[With[{r = SelectFirst[rows, #["Region"] === rg && #["MillenniumBP"] === t &]},
+     If[AssociationQ[r], r["LLModelMinusLogistic"], Missing[]]], {rg, regions}, {t, ts}];
+  lim = Max[Abs[DeleteMissing[Flatten[m]]]];
+  ArrayPlot[m, ColorFunction -> (Blend[{RGBColor[0.75, 0.15, 0.15], White, RGBColor[0.153, 0.51, 0.64]}, (# + lim)/(2 lim)] &),
+    ColorFunctionScaling -> False, ColorRules -> {_Missing -> GrayLevel[0.96]}, Frame -> True,
+    FrameTicks -> {{Transpose[{Range[Length[regions]], regions}], None},
+      {Transpose[{Range[10], Map[ToString[#] <> "\[Dash]" <> ToString[# + 1] <> " kyr" &, ts]}], None}},
+    FrameTicksStyle -> Directive[FontFamily -> "Roboto Condensed", 10],
+    Epilog -> Table[With[{r = SelectFirst[rows, #["Region"] === regions[[i]] && #["MillenniumBP"] === ts[[j]] &]},
+       If[AssociationQ[r], Text[Style[ToString[Round[r["LLModelMinusLogistic"]]], 9,
+         If[Abs[r["LLModelMinusLogistic"]] > 0.55 lim, White, Black]], {j - 0.5, Length[regions] - i + 0.5}], {}]],
+      {i, Length[regions]}, {j, 10}],
+    PlotLabel -> Style["log-likelihood: spatial model minus regional logistic (nats; blue = model wins)",
+      12, FontFamily -> "Roboto Condensed"],
+    ImageSize -> 640, AspectRatio -> 0.45]
+];
+
+McmcConvergenceTable[files_List] := Module[{chains, keys, splitRhat},
+  chains = Map[Association, Normal[Import[#, "Dataset", HeaderLines -> 1]]] & /@ files;
+  keys = DeleteCases[Keys[First[First[chains]]], "LogPosterior"];
+  splitRhat[series_List] := Module[{halves, n, m, means, vars, w, b, varHat},
+    halves = Flatten[Map[{#[[;; Floor[Length[#]/2]]], #[[Floor[Length[#]/2] + 1 ;;]]} &, series], 1];
+    n = Min[Length /@ halves]; halves = Take[#, n] & /@ halves; m = Length[halves];
+    means = Mean /@ halves; vars = Variance /@ halves;
+    w = Mean[vars]; b = n Variance[means];
+    varHat = (n - 1)/n w + b/n;
+    Sqrt[varHat/w]];
+  Table[Module[{series = Map[#[[All, k]] &, chains]},
+    <|"Parameter" -> k, "Rhat" -> splitRhat[series],
+      "PooledESS" -> Total[AutocorrelationESS /@ series],
+      "ChainMedians" -> (Median /@ series)|>], {k, keys}]
 ];
 
 End[];

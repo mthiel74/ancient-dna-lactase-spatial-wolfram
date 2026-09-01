@@ -1,0 +1,7 @@
+"Model","FreeParameters","LogLikelihood","DevianceExplained"
+"constant frequency",1,-3891.0589712154797,0
+"five independent regional logistics",10,-2756.0181037237007,0.6651759915194082
+"spatial standing variation (MAP)",11,-2694.886684140557,0.7010012677705306
+"spatial point source (MAP)",13,-2795.927839953537,0.6417874077879492
+"spatial point source + dominance h (MAP)",14,-2801.5485325147583,0.6384934737504039
+"saturated (one free p per occupied time × cell)",1051,-2184.6821897879117,1

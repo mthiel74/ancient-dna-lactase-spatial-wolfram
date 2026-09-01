@@ -6,7 +6,10 @@
 > from the current pipeline outputs at build time). This markdown draft is
 > the narrative source and reflects an earlier 4-degree run; the current
 > model uses a 2-degree landmasked grid, a smooth dairying-onset field, and
-> TemperatureMap-scaled maps.
+> TemperatureMap-scaled maps, AADR v66.p1 data (10,119 individuals), a
+> point-source origin model (notebook sections 10-11) and, since v3, the exact
+> per-sample likelihood with MCMC and a deviance ladder (section 12; see
+> `docs/v3_exact_likelihood.md`). Numbers below are the earlier run's.
 
 *A reproducible Wolfram Language pipeline: from raw ancient genotypes to a spatial diffusion–selection model fitted with sequential Monte Carlo ABC, with uncertainty carried through to the final animation.*
 
