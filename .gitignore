@@ -6,3 +6,4 @@
 *.tmp
 data/processed/*.cache
 community/.img-cache/
+data/raw/glad_adna_15-8-22.xlsx

@@ -25,8 +25,8 @@ Pipeline: GLAD ancient rs4988235 genotypes (derived from AADR v44.3), regional b
 - Spatial uncertainty map: `figures/generated/spatial_uncertainty_width_3000bp.png`
 - Spatial GIF animation: `figures/generated/lactase_persistence_spatial_posterior.gif`
 - Spatial MP4 video: `figures/generated/lactase_persistence_spatial_posterior.mp4`
-- iCloud GIF copy: `/Users/thiel/Library/Mobile Documents/com~apple~CloudDocs/Documents/Codex/20260901_131417_lactase_persistence_spatial_posterior.gif`
-- iCloud MP4 copy: `/Users/thiel/Library/Mobile Documents/com~apple~CloudDocs/Documents/Codex/20260901_131417_lactase_persistence_spatial_posterior.mp4`
+- iCloud GIF copy: `~/iCloud/Codex/20260901_131417_lactase_persistence_spatial_posterior.gif`
+- iCloud MP4 copy: `~/iCloud/Codex/20260901_131417_lactase_persistence_spatial_posterior.mp4`
 
 ## Inference Notes
 
