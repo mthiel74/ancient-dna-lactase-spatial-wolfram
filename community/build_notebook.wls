@@ -311,11 +311,14 @@ para[{"This post does not settle that debate. It does something more modest \
 and, I hope, more reusable: it builds the ", ital["entire"], " analysis \
 pipeline in Wolfram Language, from the public ancient-genotype workbook to a \
 calibrated spatial model \[LongDash] and treats uncertainty as a first-class \
-output at every step. We will parse and clean 2,999 ancient genotype records, \
-reproduce the classic regional frequency curves with proper binomial \
-likelihoods, build a spatial diffusion\[Dash]selection model on a landmasked \
-grid of Europe, fit it with sequential Monte Carlo approximate Bayesian \
-computation (10,000 forward simulations), check it with posterior predictive \
+output at every step. We will clean and cross-validate ancient genotype \
+records from two generations of the Allen Ancient DNA Resource (" <>
+ToString[nSamples] <> " dated, located individuals with rs4988235 calls in \
+the active extraction), reproduce the classic regional frequency curves with \
+proper binomial likelihoods, build a spatial diffusion\[Dash]selection model \
+on a landmasked grid of Europe, fit it with sequential Monte Carlo \
+approximate Bayesian computation (tens of thousands of forward simulations), \
+check it with posterior predictive \
 simulation and two kinds of held-out validation, stress-test the priors, and \
 render the posterior \[LongDash] mean ", ital["and"], " credible-interval \
 width \[LongDash] as the animation above. Every figure sits directly below \
@@ -557,8 +560,12 @@ gets interesting, so the fit uses sequential Monte Carlo: a population of \
 shrinking tolerance (each generation's \[Epsilon] is the median of the \
 previous population's distances), with Gaussian perturbation kernels and \
 importance weights. One implementation lesson worth passing on: with a \
-10-dimensional box prior, perturbing in the raw coordinates throws ~97% of \
-proposals out of the box (0.7 to the 10th \[TildeTilde] 0.03). The sampler \
+" <> ToString[Length[Keys[smc["PriorSpecUsed"]]]] <> "-dimensional box \
+prior, perturbing in the raw coordinates throws ~" <>
+ToString[Round[100 (1 - 0.7^Length[Keys[smc["PriorSpecUsed"]]])]] <>
+"% of proposals out of the box (0.7 to the " <>
+ToString[Length[Keys[smc["PriorSpecUsed"]]]] <> "th \[TildeTilde] " <>
+fmt[0.7^Length[Keys[smc["PriorSpecUsed"]]], 3] <> "). The sampler \
 therefore works in logit-transformed coordinates, where a uniform prior \
 becomes an exact product of standard logistic densities, every proposal is \
 automatically valid, and the importance weights stay closed-form."}],
@@ -566,19 +573,21 @@ automatically valid, and the importance weights stay closed-form."}],
 evalIn["smc = LoadOrRunSMCABC[Directory[], samples, grid];\nGrid[\n Prepend[\n  Table[{k, NumberForm[smc[\"EpsilonHistory\"][[k]], {5, 4}],\n    NumberForm[100. smc[\"AcceptanceHistory\"][[k]], {4, 1}],\n    NumberForm[smc[\"ESSHistory\"][[k]], {5, 1}]}, {k, Length[smc[\"EpsilonHistory\"]]}],\n  Style[#, Bold] & /@ {\"generation\", \"\[Epsilon]\", \"acceptance %\", \"ESS\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.5, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
 
 para[{"The tolerance falls from " <> fmt[epsFirst] <> " (the prior median \
-\[LongDash] i.e. no information) to " <> fmt[epsLast] <> " over 10,000 \
-simulations. The final effective sample size, " <> fmt[essLast, 1] <>
-" of 400, deserves a sentence rather than a footnote: importance-weight \
+\[LongDash] i.e. no information) to " <> fmt[epsLast] <> " over roughly " <>
+ToString[1000 Round[Total[Length[smc["Weights"]]/Clip[N[smc["AcceptanceHistory"]], {0.01, 1}]]/1000]] <>
+" simulations. The final effective sample size, " <> fmt[essLast, 1] <>
+" of " <> ToString[Length[smc["Weights"]]] <> ", deserves a sentence rather \
+than a footnote: importance-weight \
 degeneracy is the known cost of this weight formula whenever the posterior \
 is much tighter than the prior, every interval in this post is a weighted \
 quantile and correspondingly approximate, and the honest cure (an SMC \
-sampler with MCMC rejuvenation moves) is on the to-do list in \[Section]11. \
+sampler with MCMC rejuvenation moves) is on the to-do list in \[Section]13. \
 Reporting ESS is what separates a posterior from a scatter plot."}],
 
 evalIn["draws = ResamplePosterior[smc, 100];\nsmcOutputs = ExportSMCOutputs[Directory[], samples, grid, smc, draws];\nImport[smcOutputs[\"ParameterFigure\"]]"],
 
 captionCell["Weighted SMC posterior (blue) against the flat prior (dashed \
-orange) for all ten parameters. Prior overlays are the fastest honesty check \
+orange) for every parameter. Prior overlays are the fastest honesty check \
 in Bayesian workflow: one glance separates the dimensions the data actually \
 moved (initial frequency, dairying-modulated selection, the northern \
 multipliers) from the ones still wearing their priors (the initial spatial \
@@ -596,7 +605,17 @@ writeAll[{
 
 hd1["6.  What the posterior says"],
 
-evalIn["quantiles = PosteriorParameterQuantiles[smc];\nGrid[\n Prepend[\n  Table[With[{q = SelectFirst[quantiles, #[\"Parameter\"] === p &]},\n    {p, NumberForm[q[\"Median\"], {6, 4}],\n     Row[{\"[\", NumberForm[q[\"Lower95\"], {6, 4}], \", \", NumberForm[q[\"Upper95\"], {6, 4}], \"]\"}]}],\n   {p, {\"Log10InitialFrequency\", \"SelectionBase\", \"SelectionDairying\", \"Migration\",\n     \"SelectionMultiplierBritishIsles\", \"SelectionMultiplierRhineDanube\",\n     \"SelectionMultiplierMediterranean\", \"SelectionMultiplierBaltic\"}}],\n  Style[#, Bold] & /@ {\"parameter\", \"median\", \"95% interval\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.5, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+evalIn["quantiles = PosteriorParameterQuantiles[smc];\npriorSpec = smc[\"PriorSpecUsed\"];\nwidthShare[p_, q_] := (q[\"Upper95\"] - q[\"Lower95\"])/(0.95 (priorSpec[p][[2]] - priorSpec[p][[1]]));\nGrid[\n Prepend[\n  Table[With[{q = SelectFirst[quantiles, #[\"Parameter\"] === p &]},\n    {p, NumberForm[q[\"Median\"], {6, 4}],\n     Row[{\"[\", NumberForm[q[\"Lower95\"], {6, 4}], \", \", NumberForm[q[\"Upper95\"], {6, 4}], \"]\"}],\n     NumberForm[widthShare[p, q], {3, 2}]}],\n   {p, {\"Log10InitialFrequency\", \"SelectionBase\", \"SelectionDairying\", \"Migration\",\n     \"SelectionMultiplierBritishIsles\", \"SelectionMultiplierRhineDanube\",\n     \"SelectionMultiplierMediterranean\", \"SelectionMultiplierBaltic\", \"CallErrorRate\"}}],\n  Style[#, Bold] & /@ {\"parameter\", \"median\", \"95% interval\", \"CI width / prior width\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.5, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+
+captionCell["The last column is the anti-self-deception device: the \
+posterior 95% interval's width as a share of the prior's. A value near 1 \
+means the data taught us nothing about that parameter and its row is a \
+restatement of the prior; only rows well below 1 are findings. Reviewers \
+of an earlier draft of this analysis demonstrated \[LongDash] correctly \
+\[LongDash] that several \
+\[OpenCurlyDoubleQuote]agreements with the literature\[CloseCurlyDoubleQuote] \
+were prior tautologies of exactly this kind, which is why the column now \
+appears in every parameter table."],
 
 para[{"Three readings, in decreasing order of confidence. ", bold["First"],
 ", the total effective selection in a northern dairying cell at the \
@@ -779,7 +798,7 @@ uses exact per-step logistic growth with exponential mixing, and diagonal \
 adjacency lets the wave cross the Dover strait. The same SMC machinery \
 then turns \"where did it start?\" into a posterior distribution:"}],
 
-evalIn["originSmc = LoadOrRunOriginSMCABC[Directory[], samples, grid];\nGrid[\n Prepend[\n  Table[With[{q = SelectFirst[PosteriorParameterQuantiles[originSmc], #[\"Parameter\"] === p &]},\n    {p, NumberForm[q[\"Median\"], {6, 3}],\n     Row[{\"[\", NumberForm[q[\"Lower95\"], {6, 3}], \", \", NumberForm[q[\"Upper95\"], {6, 3}], \"]\"}]}],\n   {p, {\"OriginLatitude\", \"OriginLongitude\", \"OriginTimeBP\",\n     \"Log10InjectFrequency\", \"Migration\", \"SelectionDairying\",\n     \"DairyingLeadYears\", \"CallErrorRate\"}}],\n  Style[#, Bold] & /@ {\"parameter\", \"median\", \"95% interval\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.5, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+evalIn["originSmc = LoadOrRunOriginSMCABC[Directory[], samples, grid];\noriginQuant = PosteriorParameterQuantiles[originSmc];\noriginPrior = originSmc[\"PriorSpecUsed\"];\noWidthShare[p_, q_] := (q[\"Upper95\"] - q[\"Lower95\"])/(0.95 (originPrior[p][[2]] - originPrior[p][[1]]));\nGrid[\n Prepend[\n  Table[With[{q = SelectFirst[originQuant, #[\"Parameter\"] === p &]},\n    {p, NumberForm[q[\"Median\"], {6, 3}],\n     Row[{\"[\", NumberForm[q[\"Lower95\"], {6, 3}], \", \", NumberForm[q[\"Upper95\"], {6, 3}], \"]\"}],\n     NumberForm[oWidthShare[p, q], {3, 2}]}],\n   {p, {\"OriginLatitude\", \"OriginLongitude\", \"OriginTimeBP\",\n     \"Log10InjectFrequency\", \"Migration\", \"SelectionDairying\",\n     \"DairyingLeadYears\", \"CallErrorRate\"}}],\n  Style[#, Bold] & /@ {\"parameter\", \"median\", \"95% interval\", \"CI width / prior width\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.5, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
 
 evalIn["OriginDensityMap[originSmc]"],
 
@@ -973,6 +992,45 @@ ancient-DNA confirmation of the Carpathian origin, and whether the \
 westward lean is signal or residual artefact (sampling density, the \
 grid's geometry, the absence of drift) is exactly what the \
 assumption-sensitivity experiments in the repository are for."}],
+
+para[{bold["Which assumptions decide the answer?"], " If importing Itan et \
+al.'s commitments one at a time drags the posterior east, the westward lean \
+is an artefact of our assumptions; if nothing drags it east, the \
+localization in their result must live in their ", ital["data"], ". Four \
+complete refits (", mono["scripts/run_origin_bridge_experiments.wls"],
+"), each changing exactly one thing against the baseline: ",
+ital["trust the early calls"], " (error rate forced to \[TildeTilde]0, so \
+every damage-suspect early read counts as a real carrier); ",
+ital["tight coupling"], " (dairying lead capped at 200 years \[LongDash] \
+the origin ", ital["is"], " the dairying front, the structural core of the \
+demic model); ", ital["slow mixing"], " (migration capped where the \
+travelling wave keeps memory of its source); and the last two together as \
+the closest structural analogue of Itan et al.'s model that this framework \
+can express:"}],
+
+evalIn["bridge = Map[Association, Normal[Import[FileNameJoin[{Directory[], \"data\", \"processed\", \"origin_bridge_summary.csv\"}], \"Dataset\", HeaderLines -> 1]]];\nbnum[x_] := If[NumericQ[x], N[x], ToExpression[StringReplace[ToString[x], {\"e\" -> \"*^\", \"E\" -> \"*^\"}]]];\nGrid[\n Prepend[\n  Map[{#[\"Variant\"], NumberForm[#[\"ESS\"], {4, 1}],\n    Row[{NumberForm[#[\"ModeLat\"], {4, 1}], \"N, \", NumberForm[#[\"ModeLon\"], {4, 1}], \"E\"}],\n    Round[#[\"TimeMed\"]],\n    NumberForm[#[\"MassWestOf5E\"], {3, 2}],\n    NumberForm[#[\"MassCentral\"], {3, 2}],\n    NumberForm[bnum[#[\"MassCarpathian\"]], {4, 3}],\n    NumberForm[#[\"Bhattacharyya\"], {3, 2}]} &, bridge],\n  Style[#, Bold] & /@ {\"variant\", \"ESS\", \"KDE mode\", \"origin BP\",\n    \"mass W of 5\[Degree]E\", \"central\", \"Carpathian\", \"BC vs Itan\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+
+captionCell["The bridge table, and it is unanimous: no variant \[LongDash] \
+not even the Itan-like combination \[LongDash] moves any appreciable \
+posterior mass into the Carpathian box, and every variant keeps the bulk \
+of its mass west of 5\[Degree]E. Tight coupling even backfires: forced to \
+sit on the dairying front, the fit responds by pushing the origin ",
+ital["later"], ", where the front has already reached the Atlantic and \
+the constraint no longer binds geography. Rows with effective sample \
+sizes below ~25 carry large Monte Carlo error and should be read as \
+direction, not decimals \[LongDash] but the direction is the same in all \
+five fits. The conclusion writes itself: within this model family, the \
+ancient genotypes do not contain the central-European localization. Itan \
+et al.'s tight Carpathian mode must therefore be credited to the inputs \
+this analysis deliberately does not use \[LongDash] the modern allele \
+frequency surface and the demic simulation machinery \[LongDash] rather \
+than to their gene\[Dash]culture assumptions, which we just imported \
+wholesale without reproducing their answer. Reproducing the \
+\[OpenCurlyDoubleQuote]Hungary result\[CloseCurlyDoubleQuote] from \
+ancient DNA alone would need either far more pre-6000 BP genomes than \
+biology left behind, or statistics that read the spread geometry \
+(arrival-time cones) rather than binned frequencies \[LongDash] the \
+first item on the future-work list."],
 
 para[{"It is worth being precise about ", ital["why"], " location fails \
 while timing succeeds, because the reason is in the data rather than the \
