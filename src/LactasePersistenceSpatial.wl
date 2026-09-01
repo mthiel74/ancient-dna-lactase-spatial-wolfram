@@ -48,6 +48,9 @@ BuildObservationIndex::usage = "BuildObservationIndex[samples, grid] links calle
 
 ExportHeroAnimation::usage = "ExportHeroAnimation[root, samples, grid, posterior] renders the single-panel cinematic hero time-lapse with year badge, uncertainty inset, and progress bar, exporting MP4 and GIF.";
 LoadOrRunSMCABC::usage = "LoadOrRunSMCABC[root, samples, grid] reloads the stored SMC posterior from data/processed if present, otherwise runs RunSMCABC.";
+LoadOrRunCrossValidation::usage = "LoadOrRunCrossValidation[root, samples, grid] reloads the stored held-out-region cross-validation table or computes and stores it.";
+LoadOrRunTimeSliceValidation::usage = "LoadOrRunTimeSliceValidation[root, samples, grid] reloads the stored time-slice validation summary or computes and stores it.";
+LoadOrRunSensitivity::usage = "LoadOrRunSensitivity[root, samples] reloads the stored prior/onset sensitivity table (and figure) or computes and stores them.";
 
 LogisticExplorer::usage = "LogisticExplorer[samples] returns a self-contained Manipulate: regional binned data with Wilson intervals against an adjustable logistic trajectory.";
 DairyingCovariateExplorer::usage = "DairyingCovariateExplorer[] returns a Manipulate exploring the smooth dairying-onset covariate D(t).";
@@ -1816,9 +1819,38 @@ RunTimeSliceValidation[samples_List, grid_List, OptionsPattern[]] := Module[
   |>
 ];
 
+LoadOrRunCrossValidation[root_String, samples_List, grid_List, opts___] := Module[{file, rows},
+  file = FileNameJoin[{root, "data", "processed", "cross_validation_by_region.csv"}];
+  If[FileExistsQ[file],
+    Map[Association, Normal[Import[file, "Dataset", HeaderLines -> 1]]],
+    rows = RunSMCCrossValidation[samples, grid, opts];
+    ExportRows[file, rows]; rows]
+];
+
+LoadOrRunTimeSliceValidation[root_String, samples_List, grid_List, opts___] := Module[
+  {file, ppcFile, ts},
+  file = FileNameJoin[{root, "data", "processed", "time_slice_validation.csv"}];
+  ppcFile = FileNameJoin[{root, "data", "processed", "time_slice_posterior_predictive.csv"}];
+  If[FileExistsQ[file],
+    First[Map[Association, Normal[Import[file, "Dataset", HeaderLines -> 1]]]],
+    ts = RunTimeSliceValidation[samples, grid, opts];
+    ExportRows[file, {KeyDrop[ts, "PosteriorPredictive"]}];
+    ExportRows[ppcFile, ts["PosteriorPredictive"]];
+    KeyDrop[ts, "PosteriorPredictive"]]
+];
+
 (* --- prior and dairying-onset sensitivity analysis --- *)
 
 ModifiedPriorSpec[changes_Association] := Join[$PriorSpec, changes];
+
+LoadOrRunSensitivity[root_String, samples_List, opts___] := Module[{file, rows},
+  file = FileNameJoin[{root, "data", "processed", "sensitivity_posterior_quantiles.csv"}];
+  If[FileExistsQ[file],
+    Map[Association, Normal[Import[file, "Dataset", HeaderLines -> 1]]],
+    rows = RunSensitivityAnalysis[samples, opts];
+    ExportSensitivityOutputs[root, rows];
+    Map[Association, Normal[Import[file, "Dataset", HeaderLines -> 1]]]]
+];
 
 $SensitivityScenarios = <|
   "Baseline" -> <|"PriorChanges" -> <||>, "OnsetShiftYears" -> 0|>,

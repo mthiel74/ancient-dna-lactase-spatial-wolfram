@@ -1,6 +1,6 @@
 # Run Summary
 
-Generated: 2026-08-31T23:54:37
+Generated: 2026-09-01T13:14:17
 
 Pipeline: GLAD ancient rs4988235 genotypes (derived from AADR v44.3), regional binomial logistic reproduction, coarse spatial diffusion-selection model, SMC-ABC inference with spatial-gradient summary statistics, posterior predictive checks, held-out validation, and prior sensitivity analysis.
 
@@ -25,12 +25,12 @@ Pipeline: GLAD ancient rs4988235 genotypes (derived from AADR v44.3), regional b
 - Spatial uncertainty map: `figures/generated/spatial_uncertainty_width_3000bp.png`
 - Spatial GIF animation: `figures/generated/lactase_persistence_spatial_posterior.gif`
 - Spatial MP4 video: `figures/generated/lactase_persistence_spatial_posterior.mp4`
-- iCloud GIF copy: `/Users/thiel/Library/Mobile Documents/com~apple~CloudDocs/Documents/Codex/20260831_235437_lactase_persistence_spatial_posterior.gif`
-- iCloud MP4 copy: `/Users/thiel/Library/Mobile Documents/com~apple~CloudDocs/Documents/Codex/20260831_235437_lactase_persistence_spatial_posterior.mp4`
+- iCloud GIF copy: `/Users/thiel/Library/Mobile Documents/com~apple~CloudDocs/Documents/Codex/20260901_131417_lactase_persistence_spatial_posterior.gif`
+- iCloud MP4 copy: `/Users/thiel/Library/Mobile Documents/com~apple~CloudDocs/Documents/Codex/20260901_131417_lactase_persistence_spatial_posterior.mp4`
 
 ## Inference Notes
 
-SMC-ABC: 400 particles, 5 tolerance generations, final epsilon 0.0408, final ESS 26.6, 8400 total simulations.
+SMC-ABC: 400 particles, 5 tolerance generations, final epsilon 0.0443, final ESS 16.0, 9600 total simulations.
 
 ## Scientific Status
 
