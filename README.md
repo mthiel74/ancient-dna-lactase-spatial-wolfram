@@ -16,11 +16,19 @@ Repository target: `mthiel74/ancient-dna-lactase-spatial-wolfram`
 
 ![Posterior density of the allele's origin](figures/generated/origin_posterior_density.png)
 
-*The point-source origin model, fitted with the same SMC-ABC: weighted posterior density of where the allele's rise began (star: weighted median, ~51.5N 12.6E; the 95% region spans most of Europe and comfortably includes the classic central-European/Carpathian origin of Itan et al. 2009 - the origin is honestly weakly identified from a handful of early heterozygotes).*
+*The point-source origin model, fitted with the same SMC-ABC plus an explicit gene-culture coupling (the source must sit where dairying already existed, within 800 years of local onset): weighted posterior density of where the allele's selection-driven rise began (star: posterior mode). The posterior is deliberately wide - a handful of early heterozygotes cannot pin a point on the map - but its medians (45.8N, 10.2E; origin 7220 BP [6808, 8526]) sit within a few degrees and a couple of centuries of the Itan et al. 2009 estimate (mode 48.5N 13E, 7441 BP [6256, 8683]), whose entire high-density region lies inside our 95% mass.*
+
+![Conditional origin fit surface](figures/generated/origin_fit_surface.png)
+
+*Prior-free cross-check: non-origin parameters pinned at posterior medians, the point source moved through every land cell, coloured by fit to the ancient samples. The data alone prefer a broad northern-central band (latitude far better constrained than longitude); Iberia, the southern Balkans and Ireland are ruled out.*
 
 ![Origin spread animation](figures/generated/origin_spread.gif)
 
-*Forward simulation from the fitted origin: the travelling wave, 9600 BP to the present. H.264 video: [origin_spread.mp4](figures/generated/origin_spread.mp4).*
+*Forward simulation from the fitted origin: the travelling wave, 9600 BP to the present (star: posterior modal origin). H.264 video: [origin_spread.mp4](figures/generated/origin_spread.mp4).*
+
+![Model vs Itan et al. 2009](figures/generated/origin_comparison_side_by_side.png)
+
+*Side by side with the published record: our ancient-genotype-only posterior (left) against Figure 3 of Itan et al. 2009 (right; PLoS Comp Biol, CC-BY), which used archaeological dates and modern frequencies instead. Independent inputs, overlapping answers - at very different sharpness, which is exactly what the information content of each dataset should produce. Full quantitative comparison (including Bersaglieri 2004 and Burger 2020 selection coefficients and 1000 Genomes present-day frequencies) in section 11 of the community notebook.*
 
 ![Regional logistic reproduction with Wilson intervals](figures/generated/regional_logistic_reproduction.png)
 

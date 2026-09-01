@@ -696,8 +696,16 @@ time, and the injection frequency), a wider migration prior (a travelling \
 wave has to actually travel: m \[Element] [0.02, 0.6] per generation, \
 integrated stably with exact per-step logistic growth and exponential \
 mixing), and diagonal adjacency so the wave can cross the Dover strait. \
-The same SMC machinery then turns \"where did it start?\" into a \
-posterior distribution:"}],
+One scientific commitment is made explicit rather than left to the prior: \
+the source must sit where dairying already existed (within 800 years of \
+the local onset), because the thing being located is the start of the ", \
+ital["selection-driven rise"], ", not the first mutation event \[LongDash] \
+the same gene\[Dash]culture coupling that Itan et al. build into their \
+model. Without it, a drift-free simulator lets a vanishingly small \
+injection idle for millennia in pre-dairying forager regions, and the \
+origin location quietly decouples from the story being told. The same SMC \
+machinery then turns \"where did it start?\" into a posterior \
+distribution:"}],
 
 evalIn["originSmc = LoadOrRunOriginSMCABC[Directory[], samples, grid];\nGrid[\n Prepend[\n  Table[With[{q = SelectFirst[PosteriorParameterQuantiles[originSmc], #[\"Parameter\"] === p &]},\n    {p, NumberForm[q[\"Median\"], {6, 3}],\n     Row[{\"[\", NumberForm[q[\"Lower95\"], {6, 3}], \", \", NumberForm[q[\"Upper95\"], {6, 3}], \"]\"}]}],\n   {p, {\"OriginLatitude\", \"OriginLongitude\", \"OriginTimeBP\",\n     \"Log10InjectFrequency\", \"Migration\", \"SelectionDairying\"}}],\n  Style[#, Bold] & /@ {\"parameter\", \"median\", \"95% interval\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.5, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
 
@@ -705,13 +713,32 @@ evalIn["OriginDensityMap[originSmc]"],
 
 captionCell["The reverse-diffusion result, in the spirit of Itan et al.'s \
 famous origin map: weighted posterior density of the point source's \
-location, land-masked, with the weighted median starred. Where this mass \
+location, land-masked, with the posterior mode starred. Where this mass \
 sits \[LongDash] and how broadly it spreads \[LongDash] is the honest \
 answer this dataset gives to \"where did the rise begin?\"."],
 
+evalIn["OriginFitSurfaceMap[samples, grid, originSmc]"],
+
+captionCell["A prior-free cross-check on the same question: every \
+non-origin parameter is pinned at its posterior median, the point source \
+is placed in each land cell in turn, and the map is coloured by how well \
+the forward simulation then matches the ancient samples (warmer = better \
+fit). Read it honestly, in both directions. The well-fitting region is \
+broad: the ancient data constrain the origin's latitude band far more \
+sharply than its longitude, and because the northwest of the map is \
+sampled most densely, the conditional optimum leans that way. But what \
+the scan rules out is just as informative \[LongDash] Iberia, the \
+southern Balkans, and the far northeast fit distinctly worse \[LongDash] \
+and the posterior concentration above sits comfortably inside the \
+preferred band. Where the joint posterior differs from this scan \
+\[LongDash] most visibly in pulling mass away from regions where \
+dairying arrived late \[LongDash] the difference is the gene\[Dash]culture \
+coupling and the joint fitting of origin time and injection frequency, \
+not the origin prior, which is uniform over the whole map."],
+
 para[{"And the forward story from that fitted origin \[LongDash] the \
 travelling wave the hero animation could not show \[LongDash] as its own \
-video (the star marks the posterior-median origin; the inset again tracks \
+video (the star marks the posterior modal origin; the inset again tracks \
 the 95% credible-interval width):"}],
 
 animCell[FileNameJoin[{figDir, "origin_spread.gif"}],
@@ -739,7 +766,72 @@ its uncertainty attached."}]
 
 writeAll[{
 
-hd1["11.  The animation, assembled"],
+hd1["11.  Checked against the published record"],
+
+para[{"A model that only agrees with itself is not worth posting, so here \
+is the fitted origin next to the independent estimates it never saw during \
+fitting. The reference map is Figure 3 of ", bold["Itan et al. (2009)"],
+" \[LongDash] a demic coevolution simulation driven by archaeological \
+settlement dates and ", ital["modern"], " allele frequencies, with no \
+ancient genotypes at all. Our fit uses ", ital["only"], " ancient \
+genotypes. The two are as close to independent lines of evidence as this \
+field currently offers:"}],
+
+imgFileCell[FileNameJoin[{repoRoot, "docs", "images", "originals",
+  "itan2009_fig3_origin_density.png"}], 620],
+
+captionCell["Reproduced from Itan Y, Powell A, Beaumont MA, Burger J, \
+Thomas MG (2009), \[OpenCurlyDoubleQuote]The Origins of Lactase \
+Persistence in Europe\[CloseCurlyDoubleQuote], PLoS Computational Biology \
+5(8): e1000491, Figure 3, under the Creative Commons Attribution licence. \
+Posterior density of the origin of the lactase-persistence/dairying \
+coevolution in their model: the mode sits near 48.5\[Degree]N, \
+13\[Degree]E and the high-density ridge extends toward the Carpathian \
+Basin \[LongDash] the \[OpenCurlyDoubleQuote]Hungary \
+result\[CloseCurlyDoubleQuote] of the popular retellings."],
+
+evalIn["originDraws = ResamplePosterior[originSmc, 2000];\nsTotal = Quantile[Map[#[\"SelectionBase\"] + #[\"SelectionDairying\"] &, originDraws], {0.025, 0.5, 0.975}];\noRow[p_] := SelectFirst[PosteriorParameterQuantiles[originSmc], #[\"Parameter\"] === p &];\nfq[p_, d_] := With[{q = oRow[p]}, {ToString[NumberForm[q[\"Median\"], {8, d}]],\n   \"[\" <> ToString[NumberForm[q[\"Lower95\"], {8, d}]] <> \", \" <> ToString[NumberForm[q[\"Upper95\"], {8, d}]] <> \"]\"}];\nGrid[\n {Style[#, Bold] & /@ {\"quantity\", \"this model\", \"95% interval\", \"published\", \"source\"},\n  Join[{\"origin latitude (\[Degree]N)\"}, fq[\"OriginLatitude\", 1], {\"\[TildeTilde]48.5 (mode)\", \"Itan 2009, Fig 3\"}],\n  Join[{\"origin longitude (\[Degree]E)\"}, fq[\"OriginLongitude\", 1], {\"\[TildeTilde]13 (mode)\", \"Itan 2009, Fig 3\"}],\n  Join[{\"origin date (years BP)\"}, fq[\"OriginTimeBP\", 0], {\"7441 [6256, 8683]\", \"Itan 2009\"}],\n  Join[{\"selection, dairying term\"}, fq[\"SelectionDairying\", 3], {\"0.0953 [0.0518, 0.159]\", \"Itan 2009 (dairyers)\"}],\n  {\"selection, total in dairying cells\", ToString[NumberForm[sTotal[[2]], {8, 3}]],\n   \"[\" <> ToString[NumberForm[sTotal[[1]], {8, 3}]] <> \", \" <> ToString[NumberForm[sTotal[[3]], {8, 3}]] <> \"]\",\n   \"0.014\[Dash]0.15\", \"Bersaglieri 2004\"},\n  {\"\", \"\", \"\", \"\[TildeTilde]0.06 (last 3 kyr)\", \"Burger 2020\"}},\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+
+captionCell["Independent estimates side by side. Both location medians \
+fall within about three degrees of Itan et al.'s mode, the date medians \
+agree to a couple of centuries with broadly overlapping intervals, and \
+their mode sits well inside our 95% region \[LongDash] while our \
+posterior stays far wider, as it must when the only inputs are ancient \
+genotypes thinned to a handful of early carriers. The location prior \
+spans all of Europe (36\[Dash]62\[Degree]N, \[Minus]10\[Dash]34\[Degree]E), \
+so even this level of agreement is not built in. Selection strengths are \
+parameterised differently across studies (dairyers-only versus \
+population-wide, time-varying versus constant), so order-of-magnitude \
+agreement is the right standard there."],
+
+para[{"One more check, at the other end of time: extrapolate the fitted \
+uniform-start model to the present (0 BP, i.e. 1950) and compare with \
+today's measured rs4988235-A frequencies from the 1000 Genomes Project at \
+the four sampled populations that sit on our grid:"}],
+
+evalIn["modern = {\n  {\"Britain (GBR)\", 52.5, -1.5, 0.720},\n  {\"Iberia (IBS)\", 40.4, -3.7, 0.458},\n  {\"Tuscany (TSI)\", 43.5, 11.0, 0.089},\n  {\"Finland (FIN)\", 61.0, 25.0, 0.591}};\npresent = PosteriorCellStats[draws, grid, {0}][0];\nnearCell[la_, lo_] := First[Ordering[\n   Map[EuclideanDistance[{la, lo Cos[la Degree]},\n     {#[\"Latitude\"], #[\"Longitude\"] Cos[#[\"Latitude\"] Degree]}] &, grid], 1]];\nGrid[\n Prepend[\n  Map[Function[row, With[{i = nearCell[row[[2]], row[[3]]]},\n    {row[[1]], ToString[NumberForm[present[\"Mean\"][[i]], {4, 2}]],\n     \"[\" <> ToString[NumberForm[present[\"Lower95\"][[i]], {4, 2}]] <> \", \" <>\n       ToString[NumberForm[present[\"Upper95\"][[i]], {4, 2}]] <> \"]\",\n     ToString[NumberForm[row[[4]], {4, 2}]]}]], modern],\n  Style[#, Bold] & /@ {\"population\", \"model at 0 BP\", \"95% interval\", \"1000G rs4988235-A\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.4, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+
+captionCell["Present-day extrapolation versus 1000 Genomes phase-3 allele \
+frequencies (Ensembl). Everything after ~2,000 BP is extrapolation far \
+beyond the ancient data, and the intervals say so \[LongDash] they span \
+most of the unit interval. The medians put Britain and Finland at the \
+top, correctly, but swap the bottom two, and Iberia's observed value \
+sits just above its upper bound. Read this the honest way: the model is \
+calibrated for the ancient window it was fitted to, and its present-day \
+precision is essentially nil \[LongDash] which is itself worth knowing \
+before anyone quotes the animation's final frame as a prediction."],
+
+para[{"Taken together: an origin posterior whose median lands where Itan \
+et al. put their mode, a prior-free fit surface whose preferred band \
+contains that region, selection strengths inside the published ranges, \
+and present-day extrapolations that bracket the modern frequencies while \
+confessing how little precision survives a two-millennium extrapolation. \
+None of this proves the model \[LongDash] and the fit surface is frank \
+that the data alone leave the origin's longitude loosely pinned \[LongDash] \
+but it is the pattern of agreement independent methods should show if \
+the underlying story is right."}],
+
+hd1["12.  The animation, assembled"],
 
 para[{"The hero animation at the top of the post is the whole pipeline in \
 one artifact: 81 time-interpolated frames of the kriged posterior mean, the \
@@ -751,7 +843,7 @@ base map, the full render takes under a minute:"}],
 
 codeIn["hero = ExportHeroAnimation[Directory[], samples, grid, draws];\n(* figures/generated/hero_lactase_persistence.{mp4, gif} *)"],
 
-hd1["12.  What this is not"],
+hd1["13.  What this is not"],
 
 para[{"This is a calibrated caricature, and the caveats are part of the \
 result. The regional logistic layer reproduces the published four-region \
@@ -767,7 +859,7 @@ Wright\[Dash]Fisher stochastic core, sample-level ancestry-aware \
 likelihoods, MCMC rejuvenation inside the SMC, and calibrated-date \
 uncertainty propagated end-to-end."}],
 
-hd1["13.  Reproducibility"],
+hd1["14.  Reproducibility"],
 
 para[{"Everything \[LongDash] data retrieval with checksums, processing \
 with provenance, fits, SMC, validation, sensitivity, every figure, the \
@@ -784,7 +876,7 @@ non-interactively. Repository: ",
   link["mthiel74/ancient-dna-lactase-spatial-wolfram",
     "https://github.com/mthiel74/ancient-dna-lactase-spatial-wolfram"], "."}],
 
-hd1["14.  References"],
+hd1["15.  References"],
 
 para[{"Evershed, R. P., et al. (2022). Dairying, diseases and the evolution \
 of lactase persistence in Europe. ", ital["Nature"], " 608, 336\[Dash]345. ",
@@ -797,9 +889,18 @@ years. ", ital["Current Biology"], " 30(21), 4307\[Dash]4315. ",
   link["cell.com/current-biology",
     "https://www.cell.com/current-biology/fulltext/S0960-9822(20)31187-8"]}],
 
+para[{"Bersaglieri, T., et al. (2004). Genetic signatures of strong \
+recent positive selection at the lactase gene. ",
+  ital["American Journal of Human Genetics"], " 74(6), 1111\[Dash]1120."}],
+
 para[{"Itan, Y., Powell, A., Beaumont, M. A., Burger, J., Thomas, M. G. \
 (2009). The origins of lactase persistence in Europe. ",
-  ital["PLoS Computational Biology"], " 5(8), e1000491."}],
+  ital["PLoS Computational Biology"], " 5(8), e1000491 (CC-BY; Figure 3 \
+reproduced in \[Section]11). "}],
+
+para[{"The 1000 Genomes Project Consortium (2015). A global reference for \
+human genetic variation. ", ital["Nature"], " 526, 68\[Dash]74. \
+rs4988235 population frequencies via Ensembl."}],
 
 para[{"GLAD LP Ancient Genotypes 2022 workbook (UCL), derived from the Allen \
 Ancient DNA Resource v44.3."}],

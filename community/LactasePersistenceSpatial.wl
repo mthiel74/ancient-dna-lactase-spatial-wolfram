@@ -34,6 +34,7 @@ WriteRunSummary::usage = "WriteRunSummary[root, outputs] writes a Markdown run s
 
 RunSMCABC::usage = "RunSMCABC[samples, grid] runs sequential Monte Carlo ABC with adaptive tolerances, Gaussian perturbation kernels, importance weights, and spatial-gradient summary statistics.";
 ResamplePosterior::usage = "ResamplePosterior[smc, n] draws n equally weighted posterior parameter sets from a weighted SMC result.";
+PosteriorCellStats::usage = "PosteriorCellStats[posterior, grid, times] returns per-cell posterior mean and 95% band of the simulated allele frequency at each requested time BP.";
 PosteriorParameterQuantiles::usage = "PosteriorParameterQuantiles[smc] returns weighted posterior quantiles for every model parameter.";
 ExportSMCOutputs::usage = "ExportSMCOutputs[root, samples, grid, smc, draws] writes SMC posterior tables, diagnostics, and figures.";
 RunSMCCrossValidation::usage = "RunSMCCrossValidation[samples, grid] reruns SMC-ABC with each analysis region held out and scores held-out predictions.";
@@ -56,6 +57,9 @@ RunOriginSMCABC::usage = "RunOriginSMCABC[samples, grid] fits the point-source o
 LoadOrRunOriginSMCABC::usage = "LoadOrRunOriginSMCABC[root, samples, grid] reloads the stored origin-model posterior or fits and stores it.";
 OriginDensityMap::usage = "OriginDensityMap[smc] renders the Itan-style posterior density map of the allele's origin with the weighted median starred.";
 ExportOriginSpread::usage = "ExportOriginSpread[root, samples, grid, smc] renders the forward-simulated spread animation from the fitted origin (MP4 + GIF).";
+
+OriginFitSurface::usage = "OriginFitSurface[samples, grid, smc] returns the ABC distance obtained by placing the point source in each land cell with all other parameters at their posterior medians.";
+OriginFitSurfaceMap::usage = "OriginFitSurfaceMap[samples, grid, smc] maps the conditional origin fit-quality scan (yellow/red where the data prefer the origin).";
 
 Begin["`Private`"];
 
@@ -1412,8 +1416,28 @@ ExtendedDistance[obsData_Association, trajectory_Association, grid_List] := Modu
 (* ------------------------------------------------------------------ *)
 
 SMCDistanceForVector[vector_List, obsData_Association, grid_List, spec_] := Module[
-  {params, trajectory},
+  {params, trajectory, dOrigin, originPt, gridPts, originIdx, onsetGap},
   params = ParamsFromVector[vector, spec];
+  (* a point source must sit on land: origins farther than 1.6 degrees from
+     any land cell centre (sea, or outside the modelled domain) are rejected
+     with a large graded distance, so nearest-cell snapping cannot pile
+     prior mass onto coastal cells *)
+  If[KeyExistsQ[params, "OriginTimeBP"],
+    originPt = {params["OriginLatitude"], params["OriginLongitude"] Cos[params["OriginLatitude"] Degree]};
+    gridPts = ({#["Latitude"], #["Longitude"] Cos[#["Latitude"] Degree]} & /@ grid);
+    originIdx = First @ Nearest[gridPts -> "Index", originPt];
+    dOrigin = EuclideanDistance[originPt, gridPts[[originIdx]]];
+    If[dOrigin > 1.6, Return[3. + dOrigin]];
+    (* gene-culture coupling: the point source locates the start of the
+       selection-driven rise, which presupposes dairying \[LongDash] so the
+       origin may precede the local dairying onset by at most
+       $OriginDairyingLeadYears.  Without this the deterministic core (no
+       drift) lets a tiny injection idle for millennia in forager regions
+       and the origin location decouples from the coevolution story. *)
+    onsetGap = params["OriginTimeBP"] - grid[[originIdx]]["DairyingOnsetBP"] -
+      $OriginDairyingLeadYears;
+    If[onsetGap > 0, Return[3. + onsetGap/1000.]];
+  ];
   trajectory = SimulateSpatialTrajectory[params, grid];
   ExtendedDistance[obsData, trajectory, grid]
 ];
@@ -2060,6 +2084,8 @@ SpatialTimeExplorer[samples_List, grid_List, posterior_List, times_List: {}] := 
 (* Point-source origin model: where and when did the allele start?    *)
 (* ------------------------------------------------------------------ *)
 
+$OriginDairyingLeadYears = 800.;
+
 $OriginPriorSpec = <|
   "OriginLatitude" -> {36., 62.},
   "OriginLongitude" -> {-10., 34.},
@@ -2074,7 +2100,7 @@ $OriginPriorSpec = <|
   "SelectionMultiplierBaltic" -> {0.8, 2.4}
 |>;
 
-Options[RunOriginSMCABC] = {"Particles" -> 400, "Generations" -> 5, "Seed" -> 19470}; 
+Options[RunOriginSMCABC] = {"Particles" -> 800, "Generations" -> 6, "Seed" -> 19470}; 
 
 RunOriginSMCABC[samples_List, grid_List, OptionsPattern[]] := RunSMCABC[
   samples, grid,
@@ -2132,12 +2158,24 @@ LoadOrRunOriginSMCABC[root_String, samples_List, grid_List, opts___] := Module[
    posterior (origin longitude, latitude), rendered on the land-masked map
    with the weighted-median origin starred. *)
 
+OriginPosteriorMode[smc_Association] := Module[
+  {draws, pts, dist, latC, lonC, matrix, argmax},
+  draws = ResamplePosterior[smc, 400];
+  pts = {#["OriginLongitude"], #["OriginLatitude"]} & /@ draws;
+  dist = SmoothKernelDistribution[pts, {2.6, 2.0}];
+  latC = Table[la, {la, $EuropeGeoRange[[1, 2]] - 0.25, $EuropeGeoRange[[1, 1]] + 0.25, -0.5}];
+  lonC = Table[lo, {lo, $EuropeGeoRange[[2, 1]] + 0.25, $EuropeGeoRange[[2, 2]] - 0.25, 0.5}];
+  matrix = Table[PDF[dist, {lo, la}], {la, latC}, {lo, lonC}];
+  argmax = First @ Position[matrix, Max[matrix]];
+  {latC[[argmax[[1]]]], lonC[[argmax[[2]]]]}
+];
+
 OriginDensityMap[smc_Association, opts___] := Module[
   {draws, pts, dist, w, h, latC, lonC, matrix, maxd, colored, img, maskImg,
    overlay, base, medLat, medLon, starImg, composed},
   draws = ResamplePosterior[smc, 400];
   pts = {#["OriginLongitude"], #["OriginLatitude"]} & /@ draws;
-  dist = SmoothKernelDistribution[pts, {1.6, 1.2}];
+  dist = SmoothKernelDistribution[pts, {2.6, 2.0}];
   w = $MapPixelWidth; h = Round[w $MapAspect];
   latC = Table[la, {la, $EuropeGeoRange[[1, 2]] - 0.25, $EuropeGeoRange[[1, 1]] + 0.25, -0.5}];
   lonC = Table[lo, {lo, $EuropeGeoRange[[2, 1]] + 0.25, $EuropeGeoRange[[2, 2]] - 0.25, 0.5}];
@@ -2155,8 +2193,11 @@ OriginDensityMap[smc_Association, opts___] := Module[
       ImageResize[Image[Map[0.85 Clip[#/maxd, {0, 1}]^0.5 &, matrix, {2}]], {w, h}]]];
   base = BaseMapRaster[w];
   composed = ImageCompose[base, overlay];
-  medLat = WeightedQuantile[smc["ParticleVectors"][[All, 1]], smc["Weights"], 0.5];
-  medLon = WeightedQuantile[smc["ParticleVectors"][[All, 2]], smc["Weights"], 0.5];
+  (* star the joint posterior mode (KDE argmax): for a broad, multimodal
+     2D posterior the coordinate-wise medians can land between modes,
+     which misleads as a location estimate *)
+  With[{argmax = First @ Position[matrix, Max[matrix]]},
+    medLat = latC[[argmax[[1]]]]; medLon = lonC[[argmax[[2]]]]];
   starImg = Rasterize[
     Graphics[{EdgeForm[Directive[Black, AbsoluteThickness[1.2]]], White,
       Polygon[Table[(1 - 0.6 Mod[k, 2]) {Sin[k Pi/5], Cos[k Pi/5]}, {k, 0, 9}]]},
@@ -2166,7 +2207,7 @@ OriginDensityMap[smc_Association, opts___] := Module[
      (medLat - $EuropeGeoRange[[1, 1]])/($EuropeGeoRange[[1, 2]] - $EuropeGeoRange[[1, 1]]) h}];
   Framed[
     Labeled[Image[composed, ImageSize -> 640],
-      Style["Posterior density of the allele's origin (star: weighted median)", 13, Bold, Black], Top],
+      Style["Posterior density of the allele's origin (star: posterior mode)", 13, Bold, Black], Top],
     Background -> White, FrameStyle -> None, FrameMargins -> 4]
 ];
 
@@ -2183,8 +2224,7 @@ ExportOriginSpread[root_String, samples_List, grid_List, smc_Association, Option
   stats = AugmentedCellStats[draws, grid, knotTimes];
   support = KrigingSurfaceSupport[grid];
   w = 1280; h = Round[w $MapAspect];
-  medLat = WeightedQuantile[smc["ParticleVectors"][[All, 1]], smc["Weights"], 0.5];
-  medLon = WeightedQuantile[smc["ParticleVectors"][[All, 2]], smc["Weights"], 0.5];
+  {medLat, medLon} = OriginPosteriorMode[smc];
   starImg = Rasterize[
     Graphics[{EdgeForm[Directive[Black, AbsoluteThickness[1.4]]], White,
       Polygon[Table[(1 - 0.6 Mod[k, 2]) {Sin[k Pi/5], Cos[k Pi/5]}, {k, 0, 9}]]},
@@ -2207,6 +2247,48 @@ ExportOriginSpread[root_String, samples_List, grid_List, smc_Association, Option
   iCloudGIF = CopyVersionToICloud[gifFile, "origin_spread"];
   <|"OriginSpreadMP4" -> mp4File, "OriginSpreadGIF" -> gifFile,
     "ICloudOriginMP4" -> iCloudMP4, "ICloudOriginGIF" -> iCloudGIF|>
+];
+
+
+(* Conditional fit-quality scan: hold every non-origin parameter at its
+   weighted posterior median, place the point source in each land cell in
+   turn, and map the resulting ABC distance. This separates what the DATA
+   prefer from what the prior geometry contributes. *)
+
+OriginFitSurface[samples_List, grid_List, smc_Association] := Module[
+  {q, med, obsData, base, dists},
+  q = PosteriorParameterQuantiles[smc];
+  med[p_] := SelectFirst[q, #["Parameter"] === p &]["Median"];
+  obsData = ExtendedObservedData[samples, grid];
+  base = <|
+    "OriginTimeBP" -> med["OriginTimeBP"],
+    "InjectFrequency" -> 10^med["Log10InjectFrequency"],
+    "SelectionBase" -> med["SelectionBase"],
+    "SelectionDairying" -> med["SelectionDairying"],
+    "Migration" -> med["Migration"],
+    "SelectionMultiplierBritishIsles" -> med["SelectionMultiplierBritishIsles"],
+    "SelectionMultiplierRhineDanube" -> med["SelectionMultiplierRhineDanube"],
+    "SelectionMultiplierMediterranean" -> med["SelectionMultiplierMediterranean"],
+    "SelectionMultiplierBaltic" -> med["SelectionMultiplierBaltic"]
+  |>;
+  dists = Table[
+    ExtendedDistance[obsData,
+      SimulateSpatialTrajectory[
+        Join[base, <|"OriginLatitude" -> grid[[i, "Latitude"]],
+          "OriginLongitude" -> grid[[i, "Longitude"]]|>], grid],
+      grid],
+    {i, Length[grid]}];
+  dists
+];
+
+OriginFitSurfaceMap[samples_List, grid_List, smc_Association] := Module[
+  {dists, support, fitness},
+  dists = OriginFitSurface[samples, grid, smc];
+  support = KrigingSurfaceSupport[grid];
+  fitness = Rescale[-dists];
+  SpatialMap[grid, support, fitness, {},
+    "Conditional fit quality by origin cell (yellow/red: best fit)",
+    (ColorData["TemperatureMap"][#] &), 0.92, {0, 1}, "relative fit quality"]
 ];
 
 End[];
