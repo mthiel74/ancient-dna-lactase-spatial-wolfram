@@ -1392,6 +1392,27 @@ likelihood. Repository: ",
 
 hd1["16.  References"],
 
+para[{bold["Data. "], "This project is built on the Allen Ancient DNA \
+Resource (AADR). Per the AADR's own guidance, three citations are owed: the \
+AADR paper, the specific Dataverse version used, and the original \
+publication behind every individual sample \[LongDash] the last is carried \
+in the ", mono["Publication"], " column of every processed row (", 
+ToString[Length[Union[DeleteMissing[#["Publication"] & /@ samples]]]], 
+" distinct source studies across the ", ToString[Length[samples]], 
+" individuals). Only a single-variant (rs4988235) extract is redistributed \
+here; the full genotype files are not. See ", mono["DATA_LICENCES.md"], 
+" for the complete provenance and terms."}],
+
+para[{"Mallick, S., Micco, A., Mah, M., ", ital["et al."], 
+" (2024). The Allen Ancient DNA Resource (AADR): a curated compendium of \
+ancient human genomes. ", ital["Scientific Data"], " 11, 182. ",
+  link["nature.com/articles/s41597-024-03031-7",
+    "https://www.nature.com/articles/s41597-024-03031-7"]}],
+
+para[{"David Reich Lab (2024). The Allen Ancient DNA Resource, version \
+v66.p1 [dataset]. Harvard Dataverse, doi:10.7910/DVN/FFIDCW. ",
+  link["doi.org/10.7910/DVN/FFIDCW", "https://doi.org/10.7910/DVN/FFIDCW"]}],
+
 para[{"Evershed, R. P., et al. (2022). Dairying, diseases and the evolution \
 of lactase persistence in Europe. ", ital["Nature"], " 608, 336\[Dash]345. ",
   link["nature.com/articles/s41586-022-05010-7",

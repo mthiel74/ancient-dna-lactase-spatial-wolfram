@@ -123,13 +123,15 @@ Build an end-to-end Wolfram Language pipeline for the evolution of lactase persi
 
 The initial scientific target is the Allentoft et al. 2022 dataset and supplement.
 
-## Data Sources
+## Data Sources and acknowledgment
 
-Primary data target:
+The active data source is the **Allen Ancient DNA Resource (AADR) v66.p1**. The AADR asks users to give three citations, and this project honours all three:
 
-- Allentoft et al. 2022 ancient DNA dataset and supplementary material.
-- Public repositories referenced by the study.
-- Curated public mirrors only when the original source is unavailable or unsuitable for automated retrieval.
+1. **The AADR paper** — Mallick, S., Micco, A., Mah, M., et al. (2024). *The Allen Ancient DNA Resource (AADR): a curated compendium of ancient human genomes.* Scientific Data 11, 182. <https://www.nature.com/articles/s41597-024-03031-7>
+2. **The Dataverse version** — David Reich Lab (2024). *The Allen Ancient DNA Resource, version v66.p1* [dataset]. Harvard Dataverse, doi:10.7910/DVN/FFIDCW. <https://doi.org/10.7910/DVN/FFIDCW>
+3. **The original publication behind every sample** — preserved in the `Publication` column of every processed row (307 distinct source studies across the 10,119 individuals), so any sample can be traced to the study that produced it.
+
+Only a single-variant (`rs4988235`) extract is redistributed here — one genotype call per individual, with its date, coordinates and source-publication attribution. The full AADR genotype files are **not** redistributed; they are downloaded on demand by `scripts/extract_aadr_v66_rs4988235.py`. Other sources (the UCL GLAD workbook, Itan et al. 2009 Figure 3 under CC BY, and 1000 Genomes phase-3 frequencies) and their terms are documented in [`DATA_LICENCES.md`](DATA_LICENCES.md), which is the authoritative statement of provenance and reuse terms for this repository.
 
 The pipeline must parse, at minimum:
 
