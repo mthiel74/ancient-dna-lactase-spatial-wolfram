@@ -10,13 +10,18 @@ openly licensed material. Sources, terms, and what is / is not shipped:
   (`data/raw/aadr_v66_rs4988235_raw.csv` and the processed CSVs), produced by
   `scripts/extract_aadr_v66_rs4988235.py`. The full genotype files are NOT
   redistributed.
-- Terms: the AADR requires citation of the AADR paper, the Dataverse version,
-  and the original per-sample publications (each row's `Publication` column
-  carries the source-publication abbreviation for exactly this purpose).
-  The Dataverse terms do not state an explicit licence; users of this extract
-  should honour the citation obligations above. If the AADR maintainers
-  object to even this single-variant derived extract, it will be removed and
-  replaced by the extraction script alone.
+- Licence: **CC0 1.0 Universal** (public-domain dedication,
+  http://creativecommons.org/publicdomain/zero/1.0), as stated on the
+  Dataverse dataset page. CC0 places no legal restriction on reuse or
+  redistribution, so shipping this single-variant extract is permitted.
+- Credit (Community Norms + good scientific practice, honoured here): the
+  Dataverse Terms of Use ask that proper credit be given via the data
+  citation shown on the dataset page. This project cites (1) the AADR paper
+  (Mallick et al. 2024), (2) the Dataverse data citation for version v66.p1
+  (doi:10.7910/DVN/FFIDCW), and (3) the original publication behind every
+  individual sample, carried in the `Publication` column of every processed
+  row (307 distinct source studies). See the References section of the
+  notebook and the README "Data Sources and acknowledgment" section.
 
 ## GLAD ancient-genotype workbook (UCL)
 - Source: UCL Global Lactase Persistence Association Database
