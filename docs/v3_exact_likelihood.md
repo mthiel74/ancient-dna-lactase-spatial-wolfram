@@ -1,78 +1,100 @@
-# v3: exact per-sample likelihood (2026-09-01)
+# v3: exact per-sample likelihood (2026-09-01, revised 2026-09-02)
 
 ## Why
 
 The spatial simulator (`SimulateSpatialTrajectory`) is deterministic and each ancient
 individual is a binomial draw from the simulated frequency at its own cell and
-250-year step, through the genotype-error channel q = p(1-2e)+e. The likelihood is
-therefore exact and costs one forward run (0.05 s on the 191-cell 2-degree grid).
+250-yr step, through the genotype-error channel q = p(1-2e)+e. The likelihood is
+therefore exact and costs one forward run (~0.05 s on the 191-cell 2-degree grid).
 SMC-ABC compressed 10,119 samples into ~39 regional time-bin frequencies plus a few
 gradient statistics before comparing; the exact likelihood uses every one of the
-6,184 in-era (<= 10,000 BP) called samples at its own position.
+6,034 in-era (<= 10,000 BP) called samples that lie within 2 deg of a grid cell.
 
 ## What was added (src/LactasePersistenceSpatial.wl)
 
-- `LikelihoodIndex[samples, grid]` - per-sample (time step, cell) positions and counts.
+- `CellIndexFor` / `CellDistanceFor` - a single cos-latitude-corrected cell-assignment
+  rule, shared by the exact likelihood and the origin injection (the ABC summary path
+  keeps its original raw-degree rule so stored ABC fits stay reproducible).
+- `LikelihoodIndex[samples, grid]` - per-sample (time step, cell) positions and counts;
+  drops samples further than `$LikelihoodSnapMaxDegrees` (=2) from any grid cell and
+  reports how many (islands and margins the lattice does not cover: Faroes, Sardinia,
+  central Anatolia) rather than silently relocating them.
 - `SampleLogLikelihood[params, grid, lidx]` - exact binomial log-likelihood.
-- `OriginSupportQ` - the same land + dairying-lead support constraint as the ABC path.
-- `RunMCMC[samples, grid, opts]` - adaptive Metropolis (Haario et al. 2001) in the
-  unbounded logit coordinates, covariance learned from the history, scale nudged to
-  ~25% acceptance; returns an SMC-compatible association (uniform weights).
-- `RunOriginMCMC`, `LoadOrRunOriginMCMC` (cache: data/processed/origin_mcmc_chain.csv).
-- `DominanceGrowth` - diploid selection with dominance h (fitnesses 1, 1+hs, 1+s),
-  switched on by a "Dominance" key.
-- `DevianceLadder`, `RegionalLogisticMLE`, `LikelihoodResidualTable`,
-  `ResidualHeatmap`, `McmcConvergenceTable`, `AutocorrelationESS`.
+- `RunMCMC` - adaptive Metropolis (Haario et al. 2001, with Gelman/Roberts/Gilks 1996
+  scaling and Roberts & Rosenthal 2009 acceptance-rate targeting) in the unbounded
+  logit coordinates; `RunOriginMCMC`, `LoadOrRunOriginMCMC` (cache keyed by prior,
+  snap geometry and seed - not chain length), and `ReloadOriginMCMC` (pure reload, no
+  cache check or refit; used by the notebook and figure scripts).
+- `AutocorrelationESS` - Geyer (1992) initial-positive-sequence ESS, autocorrelations
+  precomputed by FFT so it stays O(n log n) on a barely-mixing chain.
+- `DominanceGrowth` - diploid selection with dominance h (fitnesses 1, 1+hs, 1+s).
+- `DevianceLadder` (reports likelihood-parameter counts, excluding the support-only
+  DairyingLeadYears), `BestLikelihoodParams` (highest-likelihood vector across chains +
+  per-chain best, converting stored LogPosterior back to log-likelihood),
+  `RegionalLogisticMLE`, `LikelihoodResidualTable`, `ResidualHeatmap`,
+  `McmcConvergenceTable` (split-Rhat + per-chain Geyer ESS).
 
-## Runs (seeds in file names)
+## Runs (seeds in file names; 30k iterations, 10k burn, thin 5, except dominance 20k/7k)
 
-| script | model | iterations | result |
-|---|---|---|---|
-| run_origin_mcmc.wls (seed 314159) | point source | 30k, burn 10k, thin 5 | 48.0N 10.4E, T 9378, e 0.016, min ESS 12 |
-| run_origin_mcmc_chain.wls 2718 | point source | same | 44.7N 10.2E, T 9401, e 0.017 |
-| run_origin_mcmc_chain.wls 1618 | point source | same | 45.3N 9.6E, T 9250, e 0.018 |
-| run_main_mcmc.wls 314159 | standing variation (Migration prior widened to [0.02,0.3]) | same | p0 ~ 0.2%, lat gradient +, Migration 0.029, e 0.006 |
-| run_main_mcmc.wls 2718 | standing variation | same | agrees |
-| run_origin_mcmc_dominance.wls 314159 | point source + h | 20k, burn 7k | h 0.98, origin 53.0N 4.4E, T 7561, e 0.019; MAP LL -2801.5 (14 params) |
+Origin model: 3 chains (seeds 314159, 2718, 1618). Standing-variation model
+(`run_main_mcmc.wls`, Migration prior widened to the origin range): 2 chains (314159,
+2718). Dominance: 1 chain (314159).
 
-## Deviance ladder (6,184 samples; data/processed/origin_mcmc_deviance.csv)
+## Deviance ladder (6,034 samples; data/processed/origin_mcmc_deviance.csv)
 
-| model | free params | log-likelihood | deviance explained |
-|---|---|---|---|
-| constant frequency | 1 | -3891.1 | 0 |
-| five independent regional logistics | 10 | -2756.0 | 0.665 |
-| spatial standing variation (MAP) | 11 | -2694.9 | 0.701 |
-| spatial point source (MAP) | 13 | -2795.9 | 0.642 |
-| spatial point source + dominance h (MAP) | 14 | -2801.5 | 0.638 |
-| saturated (1051 occupied time x cell bins) | 1051 | -2184.7 | 1 |
+| model | likelihood params | log-likelihood | nats over constant |
+|---|---:|---:|---:|
+| constant frequency | 1 | -3819.8 | 0 |
+| five independent regional logistics | 10 | -2722.2 | 1097.6 |
+| spatial standing variation | 11 | -2653.0 | 1166.8 |
+| spatial point source | 12 | -2767.5 | 1052.4 |
+| spatial point source + dominance h | 13 | -2879.9 | 940.0 |
+| saturated (1,010 occupied time x cell bins) | 1010 | -2172.1 | 1647.7 |
 
 The point-source model fits worse than five unrelated logistic curves with more
-parameters, and ~100 nats worse than standing variation with two fewer. Its exact-
-likelihood posterior is sharp (95% intervals of ~1 degree) but pinned against the prior
-bounds of Migration (0.3: mixing fraction 1-exp(-8.9 m) = 0.93 per step), DairyingLeadYears
-(2000) and OriginTimeBP (10,000), and the three chains give split-Rhat 2-7 on the
-selection multipliers (data/processed/origin_mcmc_convergence.csv): the location is the
-least-bad centroid of the sample cloud under a model the data reject.
+likelihood parameters, and ~114 nats worse than standing variation with one fewer.
+Its exact-likelihood posterior is sharp but the three chains disagree
+(data/processed/origin_mcmc_convergence.csv: worst split-Rhat ~6.4, minimum per-chain
+Geyer ESS ~3), and the British-Isles selection multiplier pins to its bound of 2.2:
+the sharp location is the least-bad centroid of the sample cloud under a model the
+data reject, not an estimate of where the allele arose.
 
 ## Residual decomposition (data/processed/origin_mcmc_residuals.csv)
 
-Point-source MAP minus regional-logistic log-likelihood, by region: Rhine-Danube +82,
-Mediterranean -8, Other Europe -4, Baltic -47, British Isles -64. The British/Baltic
-losses sit in the 1-2 kyr BP bins where the aggregate frequency is nearly right
-(British Isles 0.64 observed vs 0.58 predicted) and the within-region pattern is wrong:
-a continental-arrival gradient across Britain against samples in which the periphery is
-already high. The point-source e ~ 0.017 is not a damage rate but a ceiling (1-e) that
-substitutes for a plateau; the standing-variation chains settle at e ~ 0.006.
+Point-source (best-likelihood) minus regional-logistic log-likelihood, by region:
+Rhine-Danube ~+68, Mediterranean and Other Europe near zero, Baltic ~-36, British
+Isles ~-62, almost all of the losses in the 1-2 kyr BP bins. There the aggregate
+frequency is nearly right (British Isles 0.64 observed vs 0.61 predicted); the loss is
+within-region, from a handful of derived alleles landing in cells the deterministic
+front has left near the error floor (each ~3.6 nats). The point-source e ~ 0.018 is
+being used as a ceiling (1-e), not a damage rate; the standing-variation chains, which
+need no ceiling, settle at e ~ 0.005.
 
 ## What this changes in the post
 
-Section 12 of the notebook. Timing and selection size: unchanged and stable across
-ABC, exact likelihood and chains. Location: identified by the exact likelihood only
-inside a model the same likelihood rejects in favour of standing variation; that is the
-end point of this dataset for the origin question.
+Section 12 of the notebook. Timing and selection size: stable across ABC, exact
+likelihood and chains. Location: identified by the exact likelihood only inside a model
+the same likelihood rejects in favour of standing variation; that is the end point of
+this dataset for the origin question. Every figure is Wolfram-native and every number
+in the section is recomputed at build time from the committed chain CSVs.
+
+## Known limitations (see notebook sections 12 and 14)
+
+- The chains do not meet modern convergence standards (Vehtari et al. 2021: Rhat <= 1.01,
+  ESS >= 100/chain). Adaptive Metropolis is a weak sampler on these ridge-shaped
+  posteriors; a differential-evolution or tempered sampler is the right next tool. The
+  ladder ranking is robust to this (gaps of tens of nats vs a few-nat chain spread);
+  single-chain credible intervals are not.
+- Pseudo-replication: many samples share identical coordinates and dates (large single
+  cemeteries), so nominal allele counts overstate the information; the nat scale of the
+  ladder is approximate even though the ranking is not.
+- Pseudo-haploid single-read calls (69% of samples) are treated as Bernoulli(p) with
+  n=1; reference/mapping bias is not modelled.
+- 60% of samples have no radiocarbon range and are archaeologically dated; the 250-yr
+  snap is not the dominant date approximation.
 
 ## Next
 
-Region-specific selection onset tied to the dairying map (no single origin); beta-binomial
-overdispersion / Wright-Fisher core; per-sample calibrated-date uncertainty; a better
-sampler for the ridge-shaped posteriors (DE-MC or tempered SMC on the exact likelihood).
+Region-specific selection onset tied to the dairying map (no single origin);
+beta-binomial overdispersion / Wright-Fisher core; per-sample calibrated-date
+uncertainty; a better sampler for the ridge-shaped posteriors.

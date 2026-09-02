@@ -39,13 +39,20 @@ SampleLogLikelihood::usage = "SampleLogLikelihood[params, grid, lidx] returns th
 RunMCMC::usage = "RunMCMC[samples, grid, opts] runs adaptive Metropolis MCMC on the exact per-sample likelihood in unbounded (logit) coordinates and returns an SMC-compatible posterior association with uniform weights.";
 RunOriginMCMC::usage = "RunOriginMCMC[samples, grid, opts] is RunMCMC with the point-source origin prior $OriginPriorSpec.";
 LoadOrRunOriginMCMC::usage = "LoadOrRunOriginMCMC[root, samples, grid, opts] reloads the stored origin-model MCMC chain or runs and stores it.";
-OriginSupportQ::usage = "OriginSupportQ[params, grid] is True when the origin lies within 1.6 deg of a land cell and does not precede local dairying onset by more than DairyingLeadYears.";
-AutocorrelationESS::usage = "AutocorrelationESS[series] estimates the effective sample size of a Markov chain series from its initial positive autocorrelations.";
+ReloadOriginMCMC::usage = "ReloadOriginMCMC[root] reads the stored origin_mcmc_chain.csv into a posterior association without any cache check or refit.";
+ReloadChainAsPosterior::usage = "ReloadChainAsPosterior[file, spec] reads a stored MCMC chain CSV into a posterior association.";
+OriginSupportQ::usage = "OriginSupportQ[params, grid] is True when the origin lies within 1.6 deg of a land cell and does not precede local dairying onset by more than DairyingLeadYears. DairyingLeadYears enters the model ONLY through this support constraint; it never enters the simulator or the likelihood.";
+AutocorrelationESS::usage = "AutocorrelationESS[series] estimates the effective sample size of a Markov chain series with Geyer's initial positive sequence estimator.";
 DominanceGrowth::usage = "DominanceGrowth[freqs, s, h, gens] advances allele frequencies over gens generations under diploid selection with dominance h (fitnesses 1, 1+hs, 1+s).";
-DevianceLadder::usage = "DevianceLadder[samples, grid, <|name -> params, ...|>] returns the exact log-likelihood of the constant, five-regional-logistic, each supplied spatial model, and the saturated model on the same in-era samples.";
+DevianceLadder::usage = "DevianceLadder[samples, grid, <|name -> params, ...|>] returns the exact log-likelihood of the constant, five-regional-logistic, each supplied spatial model (at the supplied parameters - a lower bound on its maximum when they come from a chain), and the saturated model on the same in-era samples.";
+BestLikelihoodParams::usage = "BestLikelihoodParams[files, spec] returns the highest-likelihood parameter vector across stored chain files together with the best log-likelihood reached by each chain.";
+ChainLogLikelihoods::usage = "ChainLogLikelihoods[rows, spec] converts stored LogPosterior values of chain rows back to log-likelihoods by removing the logistic log-prior.";
+CellIndexFor::usage = "CellIndexFor[lat, lon, grid] is the index of the nearest grid cell in cos-latitude-corrected degrees; the single cell-assignment rule of the exact-likelihood path and the origin injection.";
+CellDistanceFor::usage = "CellDistanceFor[lat, lon, cell] is the cos-latitude-corrected distance in degrees from a point to a grid cell centre.";
+$LikelihoodSnapMaxDegrees::usage = "$LikelihoodSnapMaxDegrees is the largest cos-corrected distance (degrees) from a sample to its nearest grid cell for the sample to enter the exact likelihood (default 2).";
 LikelihoodResidualTable::usage = "LikelihoodResidualTable[samples, grid, params] decomposes, by region and millennium, the log-likelihood of the spatial model at params minus that of independent regional logistic curves.";
 ResidualHeatmap::usage = "ResidualHeatmap[rows] renders a LikelihoodResidualTable as a region \[Times] millennium heat map.";
-McmcConvergenceTable::usage = "McmcConvergenceTable[files] computes split-Rhat, pooled ESS and per-chain medians from stored MCMC chain CSV files.";
+McmcConvergenceTable::usage = "McmcConvergenceTable[files] computes split-Rhat, per-chain Geyer ESS and per-chain medians from stored MCMC chain CSV files.";
 RegionalLogisticMLE::usage = "RegionalLogisticMLE[lidx, grid] fits independent logistic-in-time curves per region by maximum likelihood on the samples of a LikelihoodIndex.";
 $LikelihoodTimes::usage = "$LikelihoodTimes is the list of simulator time steps (years BP) used to place samples in the exact likelihood.";
 PosteriorCellStats::usage = "PosteriorCellStats[posterior, grid, times] returns per-cell posterior mean and 95% band of the simulated allele frequency at each requested time BP.";
@@ -683,6 +690,18 @@ DominanceGrowth[freqs_List, s_List, h_?NumericQ, gens_?NumericQ] := Module[
   p
 ];
 
+(* one metric for every "which cell is this point in" question in the
+   exact-likelihood path and the origin injection: latitude in degrees,
+   longitude scaled by cos(latitude), so 1 unit is ~111 km in both directions.
+   (BuildObservationIndex, used by the ABC summary path, keeps its original
+   raw-degree nearest-cell rule so that stored ABC fits stay reproducible.) *)
+CellIndexFor[lat_?NumericQ, lon_?NumericQ, grid_List] := First @ Nearest[
+  ({#["Latitude"], #["Longitude"] Cos[#["Latitude"] Degree]} & /@ grid) -> "Index",
+  {lat, lon Cos[lat Degree]}];
+
+CellDistanceFor[lat_?NumericQ, lon_?NumericQ, cell_Association] :=
+  Sqrt[(lat - cell["Latitude"])^2 + ((lon - cell["Longitude"]) Cos[lat Degree])^2];
+
 Options[SimulateSpatialTrajectory] = {"StartBP" -> 10000, "EndBP" -> 0, "TimeStepYears" -> 250};
 
 SimulateSpatialTrajectory[params_Association, grid_List, OptionsPattern[]] := Module[
@@ -697,9 +716,7 @@ SimulateSpatialTrajectory[params_Association, grid_List, OptionsPattern[]] := Mo
   If[originMode,
     originBP = params["OriginTimeBP"];
     injectFreq = Lookup[params, "InjectFrequency", 0.02];
-    originCell = First @ Nearest[
-      ({#["Latitude"], #["Longitude"]} & /@ grid) -> "Index",
-      {params["OriginLatitude"], params["OriginLongitude"]}];
+    originCell = CellIndexFor[params["OriginLatitude"], params["OriginLongitude"], grid];
     freqs = ConstantArray[0., Length[grid]];
     injected = False;
     If[times[[1]] <= originBP,
@@ -2586,13 +2603,36 @@ OriginItanHPDComparisonMap[smc_Association, root_String] := Module[
 
 $LikelihoodTimes = Range[10000, 0, -250];
 
-LikelihoodIndex[samples_List, grid_List] := Module[{idx},
-  idx = BuildObservationIndex[samples, grid];
+$LikelihoodSnapMaxDegrees = 2.;
+
+LikelihoodIndex[samples_List, grid_List] := Module[{sel, placed, kept, dropped},
+  sel = Select[samples,
+    TrueQ[#["HasCall"]] && NumericValueQ[#["Latitude"]] && NumericValueQ[#["Longitude"]] &&
+      NumericValueQ[#["MeanDateBP"]] && #["MeanDateBP"] <= $SimulatorStartBP &&
+      MemberQ[Append[$AnalysisRegions, "Other Europe"], #["Region"]] &];
+  placed = Map[With[{c = CellIndexFor[#["Latitude"], #["Longitude"], grid]},
+    <|"CellIndex" -> c, "TimeBP" -> N[#["MeanDateBP"]],
+      "Called" -> #["CalledAlleles"], "Derived" -> #["DerivedAlleles"],
+      "Latitude" -> #["Latitude"], "Longitude" -> #["Longitude"],
+      "SnapDistance" -> CellDistanceFor[#["Latitude"], #["Longitude"], grid[[c]]]|>] &, sel];
+  (* a sample is used only if a grid cell lies within $LikelihoodSnapMaxDegrees
+     (cos-corrected degrees) of where it was excavated; islands and margins
+     the lattice does not cover (Faroes, Sardinia, central Anatolia) are
+     reported, not silently relocated *)
+  kept = Select[placed, #["SnapDistance"] <= $LikelihoodSnapMaxDegrees &];
+  dropped = Select[placed, #["SnapDistance"] > $LikelihoodSnapMaxDegrees &];
   <|"Positions" -> ({First @ Ordering[Abs[$LikelihoodTimes - #["TimeBP"]], 1],
-        #["CellIndex"]} & /@ idx),
-    "Called" -> N[idx[[All, "Called"]]],
-    "Derived" -> N[idx[[All, "Derived"]]],
-    "SampleCount" -> Length[idx]|>
+        #["CellIndex"]} & /@ kept),
+    "Called" -> N[kept[[All, "Called"]]],
+    "Derived" -> N[kept[[All, "Derived"]]],
+    "TimesBP" -> kept[[All, "TimeBP"]],
+    "Latitudes" -> kept[[All, "Latitude"]],
+    "Longitudes" -> kept[[All, "Longitude"]],
+    "SampleCount" -> Length[kept],
+    "DroppedCount" -> Length[dropped],
+    "DroppedCalled" -> Total[dropped[[All, "Called"]]],
+    "DroppedDerived" -> Total[dropped[[All, "Derived"]]],
+    "SnapMaxDegrees" -> $LikelihoodSnapMaxDegrees|>
 ];
 
 SampleLogLikelihood[params_Association, grid_List, lidx_Association] := Module[
@@ -2610,10 +2650,8 @@ SampleLogLikelihood[params_Association, grid_List, lidx_Association] := Module[
 OriginSupportQ[params_Association, grid_List] := Module[
   {originPt, gridPts, originIdx, dOrigin, onsetGap},
   If[! KeyExistsQ[params, "OriginTimeBP"], Return[True]];
-  originPt = {params["OriginLatitude"], params["OriginLongitude"] Cos[params["OriginLatitude"] Degree]};
-  gridPts = ({#["Latitude"], #["Longitude"] Cos[#["Latitude"] Degree]} & /@ grid);
-  originIdx = First @ Nearest[gridPts -> "Index", originPt];
-  dOrigin = EuclideanDistance[originPt, gridPts[[originIdx]]];
+  originIdx = CellIndexFor[params["OriginLatitude"], params["OriginLongitude"], grid];
+  dOrigin = CellDistanceFor[params["OriginLatitude"], params["OriginLongitude"], grid[[originIdx]]];
   If[dOrigin > 1.6, Return[False]];
   onsetGap = params["OriginTimeBP"] - grid[[originIdx]]["DairyingOnsetBP"] -
     Lookup[params, "DairyingLeadYears", $OriginDairyingLeadYears];
@@ -2624,15 +2662,23 @@ OriginSupportQ[params_Association, grid_List] := Module[
    in an underflow-safe form: log f(y) = -|y| - 2 log(1 + e^{-|y|}) *)
 LogLogisticPriorDensity[y_List] := Total[-Abs[y] - 2 Log[1 + Exp[-Abs[y]]]];
 
-AutocorrelationESS[series_List] := Module[{n = Length[series], m, v, rho, k, s = 0.},
-  m = Mean[series]; v = Variance[series];
-  If[v <= 0, Return[N[n]]];
-  k = 1;
-  While[k < Min[n/2, 200],
-    rho = Mean[(series[[;; n - k]] - m) (series[[k + 1 ;;]] - m)]/v;
-    If[rho < 0.05, Break[]];
-    s += rho; k++];
-  n/(1 + 2 s)
+(* Geyer (1992) initial positive sequence estimator. The full autocorrelation
+   function is precomputed by FFT (O(n log n)) so the estimator stays fast even
+   on a barely-mixing chain, where the initial positive sequence is long. *)
+AutocorrelationESS[series_List] := Module[
+  {n = Length[series], x, npad, f, acov, rho, kmax, k = 1, s = 0., pair},
+  x = series - Mean[series];
+  If[Variance[series] <= 0 || n < 4, Return[N[n]]];
+  npad = 2^Ceiling[Log2[2 n]];
+  f = Fourier[PadRight[x, npad], FourierParameters -> {1, -1}];
+  acov = Re[InverseFourier[Abs[f]^2, FourierParameters -> {1, -1}]][[1 ;; n]]/n;
+  rho = acov/acov[[1]];
+  kmax = Floor[n/2] - 1;
+  While[k + 1 <= kmax,
+    pair = rho[[k + 1]] + rho[[k + 2]];
+    If[pair < 0, Break[]];
+    s += pair; k += 2];
+  N[n/(1 + 2 s)]
 ];
 
 Options[RunMCMC] = {
@@ -2702,11 +2748,34 @@ RunMCMC[samples_List, grid_List, OptionsPattern[]] := Module[
 RunOriginMCMC[samples_List, grid_List, opts___] :=
   RunMCMC[samples, grid, "PriorSpec" -> $OriginPriorSpec, opts];
 
+ReloadChainAsPosterior[file_String, spec_Association] := Module[{rows, keys, xs},
+  rows = Map[Association, Normal[Import[file, "Dataset", HeaderLines -> 1]]];
+  keys = Keys[spec];
+  xs = Map[Function[row, Table[
+      If[StringStartsQ[k, "Log10"], Log10[row[StringDrop[k, 5]]], row[k]], {k, keys}]], rows];
+  <|"Method" -> "MCMC", "ParticleVectors" -> xs,
+    "Particles" -> (KeyDrop[#, "LogPosterior"] & /@ rows),
+    "Weights" -> ConstantArray[1./Length[xs], Length[xs]],
+    "ParameterKeys" -> keys, "PriorSpecUsed" -> spec,
+    "LogPosterior" -> rows[[All, "LogPosterior"]],
+    "AcceptanceHistory" -> {Missing["LoadedFromDisk"]}, "EpsilonHistory" -> {},
+    "ESSHistory" -> {Min[AutocorrelationESS /@ Transpose[xs]]},
+    "TotalSimulations" -> Missing["LoadedFromDisk"], "GenerationShortfall" -> False|>
+];
+
+ReloadOriginMCMC[root_String] := ReloadChainAsPosterior[
+  FileNameJoin[{root, "data", "processed", "origin_mcmc_chain.csv"}], $OriginPriorSpec];
+
 LoadOrRunOriginMCMC[root_String, samples_List, grid_List, opts___] := Module[
   {file, meta, fp, rows, spec, keys, xs, mcmc},
   file = FileNameJoin[{root, "data", "processed", "origin_mcmc_chain.csv"}];
   meta = file <> ".meta.json";
-  fp = CacheFingerprint[samples, grid, $OriginPriorSpec];
+  (* the cache is keyed by the prior, the snap geometry and the RNG seed - NOT
+     the chain length: a longer or shorter run is a deliberate regeneration
+     (delete the CSV), not a silent cache miss on every reload *)
+  fp = CacheFingerprint[samples, grid, Join[$OriginPriorSpec,
+    <|"SnapMaxDegrees" -> $LikelihoodSnapMaxDegrees,
+      "Seed" -> OptionValue[RunMCMC, {opts}, "Seed"]|>]];
   If[! (FileExistsQ[file] && CacheValidQ[meta, fp]),
     mcmc = RunOriginMCMC[samples, grid, opts];
     ExportRows[file, MapThread[Append[#1, "LogPosterior" -> #2] &,
@@ -2730,6 +2799,8 @@ LoadOrRunOriginMCMC[root_String, samples_List, grid_List, opts___] := Module[
 
 (* ---------- v3 diagnostics: deviance ladder and residual decomposition ---------- *)
 
+RegionalLogisticMLE::nofit = "The regional logistic fit for `1` did not converge.";
+
 RegionalLogisticMLE[lidx_Association, grid_List] := Module[
   {k, n, regionOf, posReg, posT, qReg, fits},
   k = lidx["Derived"]; n = lidx["Called"];
@@ -2741,7 +2812,9 @@ RegionalLogisticMLE[lidx_Association, grid_List] := Module[
      kk = k[[sel]]; nn = n[[sel]]; tt = posT[[sel]]/1000.;
      nll[aa_?NumericQ, bb_?NumericQ] := -Total[kk Log[LogisticSigmoid[aa - bb tt]] +
         (nn - kk) Log[1 - LogisticSigmoid[aa - bb tt]]];
-     sol = Quiet[FindMinimum[nll[a, b], {{a, -2}, {b, 0.5}}]];
+     sol = Quiet[FindMinimum[nll[a, b], {{a, -2}, {b, 0.5}}], {FindMinimum::lstol}];
+     If[! FreeQ[sol, FindMinimum] || ! VectorQ[{a, b} /. sol[[2]], NumericQ],
+       Message[RegionalLogisticMLE::nofit, r]; Abort[]];
      fits[r] = {a, b} /. sol[[2]];
      qReg[[sel]] = LogisticSigmoid[fits[r][[1]] - fits[r][[2]] tt]],
     {r, Union[posReg]}];
@@ -2756,6 +2829,25 @@ PredictedQ[params_Association, grid_List, lidx_Association] := Module[{traj, p, 
   Clip[p (1 - 2 e) + e, {10.^-9, 1 - 10.^-9}]
 ];
 
+(* log-likelihood of every stored chain row: LogPosterior minus the logistic
+   log-prior in the unbounded coordinates the sampler used *)
+ChainLogLikelihoods[rows_List, spec_Association] := Module[{keys = Keys[spec]},
+  Map[Function[row, row["LogPosterior"] - LogLogisticPriorDensity[ToUnboundedVector[
+    Table[If[StringStartsQ[k, "Log10"], Log10[row[StringDrop[k, 5]]], row[k]], {k, keys}], spec]]], rows]
+];
+
+(* the highest-likelihood parameter vector found in a set of chain files, plus
+   the best log-likelihood reached by each chain separately (their spread is a
+   direct measure of how far the chains are from the maximum) *)
+BestLikelihoodParams[files_List, spec_Association] := Module[{chains, lls, bestPerChain, all, best},
+  chains = Map[Association, Normal[Import[#, "Dataset", HeaderLines -> 1]]] & /@ files;
+  lls = ChainLogLikelihoods[#, spec] & /@ chains;
+  bestPerChain = Max /@ lls;
+  all = Flatten[chains, 1]; best = all[[First[Ordering[Flatten[lls], -1]]]];
+  <|"Params" -> KeyDrop[best, "LogPosterior"], "BestLogLikelihood" -> Max[bestPerChain],
+    "PerChainBest" -> bestPerChain|>
+];
+
 DevianceLadder[samples_List, grid_List, models_Association] := Module[
   {lidx, k, n, agg, satLL, constLL, reg, rows},
   lidx = LikelihoodIndex[samples, grid];
@@ -2766,13 +2858,16 @@ DevianceLadder[samples_List, grid_List, models_Association] := Module[
   constLL = With[{pbar = Total[k]/Total[n]}, Total[k] Log[pbar] + (Total[n] - Total[k]) Log[1 - pbar]];
   reg = RegionalLogisticMLE[lidx, grid];
   rows = Join[
-    {<|"Model" -> "constant frequency", "FreeParameters" -> 1, "LogLikelihood" -> constLL|>,
+    {<|"Model" -> "constant frequency", "FreeParameters" -> 1, "LikelihoodParameters" -> 1, "LogLikelihood" -> constLL|>,
      <|"Model" -> "five independent regional logistics", "FreeParameters" -> 2 Length[Union[reg["Regions"]]],
-       "LogLikelihood" -> reg["LogLikelihood"]|>},
+       "LikelihoodParameters" -> 2 Length[Union[reg["Regions"]]], "LogLikelihood" -> reg["LogLikelihood"]|>},
     KeyValueMap[<|"Model" -> #1, "FreeParameters" -> Length[#2],
+       (* DairyingLeadYears enters only through the support constraint, so it is
+          not a likelihood parameter and is not counted here *)
+       "LikelihoodParameters" -> Length[DeleteCases[Keys[#2], "DairyingLeadYears"]],
        "LogLikelihood" -> SampleLogLikelihood[#2, grid, lidx]|> &, models],
     {<|"Model" -> "saturated (one free p per occupied time \[Times] cell)", "FreeParameters" -> Length[agg],
-       "LogLikelihood" -> satLL|>}];
+       "LikelihoodParameters" -> Length[agg], "LogLikelihood" -> satLL|>}];
   Map[Append[#, "DevianceExplained" -> (#["LogLikelihood"] - constLL)/(satLL - constLL)] &, rows]
 ];
 
@@ -2827,7 +2922,8 @@ McmcConvergenceTable[files_List] := Module[{chains, keys, splitRhat},
     Sqrt[varHat/w]];
   Table[Module[{series = Map[#[[All, k]] &, chains]},
     <|"Parameter" -> k, "Rhat" -> splitRhat[series],
-      "PooledESS" -> Total[AutocorrelationESS /@ series],
+      "ChainESS" -> (AutocorrelationESS /@ series),
+      "MinChainESS" -> Min[AutocorrelationESS /@ series],
       "ChainMedians" -> (Median /@ series)|>], {k, keys}]
 ];
 

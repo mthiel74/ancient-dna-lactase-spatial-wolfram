@@ -253,7 +253,7 @@ VerificationTest[
 
 VerificationTest[
   Module[{grid, samples, lidx, params, ll, traj, p, q, k, n},
-    grid = LactasePersistenceSpatial`BuildEuropeGrid[8];
+    grid = LactasePersistenceSpatial`BuildEuropeGrid[4];
     samples = Flatten@Table[
       <|"HasCall" -> True, "Latitude" -> lat, "Longitude" -> lon, "MeanDateBP" -> bp,
         "CalledAlleles" -> 2, "DerivedAlleles" -> If[bp < 4000, 1, 0],
@@ -268,7 +268,8 @@ VerificationTest[
     traj = LactasePersistenceSpatial`SimulateSpatialTrajectory[params, grid];
     p = Extract[traj["Frequencies"], lidx["Positions"]];
     q = p (1 - 2 0.001) + 0.001; k = lidx["Derived"]; n = lidx["Called"];
-    lidx["SampleCount"] == 18 && NumericQ[ll] && ll < 0 &&
+    lidx["SampleCount"] + lidx["DroppedCount"] == 18 && lidx["SampleCount"] > 0 && lidx["SampleCount"] == Length[lidx["Called"]] &&
+      NumericQ[ll] && ll < 0 &&
       Abs[ll - Total[k Log[q] + (n - k) Log[1 - q]]] < 10^-9
   ],
   True,
@@ -304,4 +305,50 @@ VerificationTest[
   ],
   True,
   TestID -> "mcmc-smoke"
+]
+
+VerificationTest[
+  Module[{y = {0.3, -2., 5.}},
+    Abs[LactasePersistenceSpatial`Private`LogLogisticPriorDensity[y] -
+      Total[Log[PDF[LogisticDistribution[], y]]]] < 10^-12
+  ],
+  True,
+  TestID -> "logistic-prior-density-matches-distribution"
+]
+
+VerificationTest[
+  Module[{grid, params, traj, cell, first},
+    (* the support rule and the injection use the same cell *)
+    grid = LactasePersistenceSpatial`BuildEuropeGrid[4];
+    params = <|"OriginLatitude" -> 48.7, "OriginLongitude" -> 11.2, "OriginTimeBP" -> 8000.,
+      "InjectFrequency" -> 0.05, "SelectionBase" -> 0., "SelectionDairying" -> 0.,
+      "Migration" -> 0., "DairyingLeadYears" -> 2000.|>;
+    cell = LactasePersistenceSpatial`CellIndexFor[48.7, 11.2, grid];
+    traj = LactasePersistenceSpatial`SimulateSpatialTrajectory[params, grid];
+    first = SelectFirst[traj["Frequencies"], Max[#] > 0 &];
+    LactasePersistenceSpatial`OriginSupportQ[params, grid] &&
+      Flatten[Position[first, _?(# > 0 &)]] === {cell}
+  ],
+  True,
+  TestID -> "origin-support-and-injection-share-cell"
+]
+
+VerificationTest[
+  Module[{grid, samples, ladder, lls},
+    grid = LactasePersistenceSpatial`BuildEuropeGrid[4];
+    samples = Flatten@Table[
+      <|"HasCall" -> True, "Latitude" -> lat, "Longitude" -> lon, "MeanDateBP" -> bp,
+        "CalledAlleles" -> 2, "DerivedAlleles" -> Which[bp < 3000, 2, bp < 4000, 1, True, 0],
+        "Region" -> LactasePersistenceSpatial`AssignRegion["", lat, lon]|>,
+      {lat, {44., 48., 52.}}, {lon, {2., 6., 10.}}, {bp, {2600., 3400., 5400., 6400.}}
+    ];
+    ladder = LactasePersistenceSpatial`DevianceLadder[samples, grid,
+      <|"toy" -> <|"InitialFrequency" -> 0.05, "SelectionBase" -> 0.01, "SelectionDairying" -> 0.01,
+        "Migration" -> 0.05, "CallErrorRate" -> 0.001|>|>];
+    lls = ladder[[All, "LogLikelihood"]];
+    (* saturated is the ceiling, constant the floor *)
+    Last[lls] >= Max[Most[lls]] && First[lls] <= Min[Rest[lls]]
+  ],
+  True,
+  TestID -> "deviance-ladder-ordering"
 ]

@@ -32,11 +32,9 @@ Repository target: `mthiel74/ancient-dna-lactase-spatial-wolfram`
 
 ![Exact-likelihood origin posterior](figures/generated/origin_mcmc_density.png)
 
-*v3 - the exact likelihood. The simulator is deterministic and every ancient individual is a binomial draw from the simulated frequency at its own cell and date, so the likelihood is exact and costs one forward run (0.05 s): `LikelihoodIndex` + `SampleLogLikelihood`, sampled by adaptive Metropolis MCMC (`RunMCMC`, `LoadOrRunOriginMCMC`; 3 chains x 30,000 iterations). No summary statistics, no tolerance schedule, no importance-weight degeneracy. The point-source posterior collapses from the ABC cloud onto the Alpine foreland (chains at 48.0N/10.4E, 45.3N/9.6E, 44.7N/10.2E; T ~ 9,300 BP) - and it does so while pushing Migration, DairyingLeadYears and OriginTimeBP onto their prior bounds and with split-Rhat of 2-7 on the selection multipliers. The map is what a misspecified model does when it is forced to be sharp, not a discovery; see the next figure.*
+*v3 - the exact likelihood. The simulator is deterministic and every ancient individual is a binomial draw from the simulated frequency at its own cell and date, so the likelihood is exact and costs one forward run (~0.05 s): `LikelihoodIndex` + `SampleLogLikelihood`, sampled by adaptive Metropolis MCMC (`RunMCMC`, `ReloadOriginMCMC`; 3 chains x 30,000 iterations, one cos-latitude-corrected cell metric shared with the simulator, and samples further than 2 deg from any grid cell dropped rather than silently relocated). No summary statistics, no tolerance schedule, no importance-weight degeneracy. The point-source posterior collapses from the diffuse ABC cloud onto a sharp spot (single chain shown: the Ligurian coast), but that sharpness is a property of a misspecified model, not a discovery: the three chains disagree (split-Rhat up to 6.4, effective sample size ~3 per chain), one selection multiplier pins to its bound, and - decisively - the model is rejected by the ladder below. See the next figure.*source model loses](figures/generated/likelihood_residual_heatmap.png)
 
-![Where the point-source model loses](figures/generated/likelihood_residual_heatmap.png)
-
-*The deviance ladder on the same 6,184 in-era samples (`DevianceLadder`): constant frequency -3891 (1 parameter); five independent regional logistic curves -2756 (10); **spatial standing-variation model (allele everywhere at 10 kyr BP, smooth gradient) -2695 (11)**; spatial point-source model -2796 (13); saturated -2185 (1,051 occupied time x cell bins). A single origin plus a diffusion wave is a worse description of these data than five unrelated curves, and ~100 nats worse than standing variation with two fewer parameters. The heat map (`LikelihoodResidualTable`, `ResidualHeatmap`) shows where: the wave wins +82 nats in Rhine-Danube (3,300+ samples resolve real within-region structure) and loses -64 in the British Isles and -47 in the Baltic, almost all at 1-2 kyr BP, where the model's continental-arrival gradient across Britain runs against samples in which the periphery is already high. A chain with diploid dominance h free (`DominanceGrowth`, `scripts/run_origin_mcmc_dominance.wls`) does not rescue the point-source model (MAP -2801.5 with 14 parameters) even though the data take the offered dominance (h ~ 0.98) - and it moves the origin to 53.0N/4.4E at ~7,560 BP: a location that jumps 500 km when the selection recursion changes is a property of the model, not of the allele. Section 12 of the notebook carries the full argument; the conclusion is that location is "identified" by the exact likelihood only inside a model the same likelihood rejects.*
+*The deviance ladder on the same 6,034 in-era samples (`DevianceLadder`), each spatial model at the best likelihood its chains reached (a lower bound on its maximum): constant frequency -3819.8 (1 likelihood parameter); five independent regional logistic curves -2722.2 (10); **spatial standing-variation model (allele everywhere at 10 kyr BP, smooth gradient) -2653.0 (11)**; spatial point-source model -2767.5 (12); point source + diploid dominance -2879.9 (13); saturated -2172.1 (1,010 occupied time x cell bins). A single origin plus a diffusion wave fits worse than five unrelated curves and ~114 nats worse than standing variation with fewer parameters - it is not merely unidentified, it is a worse description of the data than assuming the allele was already everywhere. The heat map (`LikelihoodResidualTable`, `ResidualHeatmap`) shows where: the wave wins ~68 nats in Rhine-Danube (3,300+ samples resolve real within-region structure) and loses ~62 in the British Isles and ~36 in the Baltic, almost all at 1-2 kyr BP, where a handful of derived alleles land in cells the deterministic front has left near the error floor. A dominance chain (`DominanceGrowth`, `scripts/run_origin_mcmc_dominance.wls`) does not rescue it. Section 12 of the notebook carries the full argument, with convergence diagnostics for both models; the conclusion is that location is "identified" by the exact likelihood only inside a model the same likelihood rejects.*
 
 ![Regional logistic reproduction with Wilson intervals](figures/generated/regional_logistic_reproduction.png)
 
@@ -66,16 +64,15 @@ The long-form Wolfram Community notebook (figures and animation embedded) is `co
 
 This repository now contains a runnable Wolfram Language baseline for the full workflow:
 
-- retrieve the public GLAD ancient `rs4988235` workbook derived from AADR v44.3
+- extract `rs4988235` calls, ages and coordinates from the AADR v66.p1 packed-1240K genotype release (10,119 individuals; the earlier GLAD/AADR v44.3 workbook is retained as a fallback)
 - normalize sample age, location, region, and genotype calls
 - fit regional published-style logistic trajectories
 - run a coarse Europe grid diffusion/selection spatial model
 - fit the spatial model with SMC-ABC: adaptive tolerance schedule, Gaussian perturbation kernels, importance weights, and ESS tracking, using regional time-binned frequencies plus spatial-gradient summary statistics
 - fit the same spatial models with the exact per-sample binomial likelihood by adaptive Metropolis MCMC (v3), with a deviance ladder against regional-logistic and saturated baselines, split-Rhat convergence diagnostics, and a region x millennium residual decomposition
 - generate posterior predictive checks, held-out-region and held-out-time-slice validation, prior and dairying-onset sensitivity scenarios, kriged geographic maps, GIF animation, and MP4 video
-- copy every generated animation/video version to Marco's iCloud Codex folder with timestamped filenames
 
-The automated data source is the public GLAD LP Ancient Genotypes 2022 workbook used for the Evershed et al. 2022 lactase-persistence analysis. The original request named Allentoft et al. 2022; this implementation targets the public lactase-persistence genotype source that exposes the required `rs4988235` calls, ages, and coordinates.
+The active data source is the Allen Ancient DNA Resource (AADR) v66.p1 packed-1240K genotype release, decoded directly for `rs4988235`; the public GLAD LP Ancient Genotypes 2022 workbook (Evershed et al. 2022, derived from AADR v44.3) is retained only as a fallback. See `DATA_LICENCES.md` for citation obligations.
 
 ## Quick Start
 
@@ -86,7 +83,8 @@ wolframscript -file scripts/retrieve_data.wls
 wolframscript -file scripts/run_pipeline.wls --particles 400 --generations 5 --cv-particles 150 --cv-generations 4
 wolframscript -file scripts/run_origin_mcmc.wls 30000 10000        # exact-likelihood origin chain (~25 min)
 wolframscript -file scripts/run_origin_mcmc_chain.wls 2718           # extra chains for split-Rhat
-wolframscript -file scripts/run_origin_mcmc_chain.wls 1618
+wolframscript -file scripts/run_origin_mcmc_chain.wls 1618           # third chain
+wolframscript -file scripts/run_origin_mcmc_dominance.wls 314159    # dominance variant (ladder row)
 wolframscript -file scripts/run_main_mcmc.wls 314159                 # standing-variation model, exact likelihood
 wolframscript -file scripts/run_main_mcmc.wls 2718
 wolframscript -file scripts/export_v3_figures.wls                    # ladder, residuals, convergence, figures
@@ -110,7 +108,6 @@ Animation outputs:
 
 - repository GIF: `figures/generated/lactase_persistence_spatial_posterior.gif`
 - repository MP4: `figures/generated/lactase_persistence_spatial_posterior.mp4`
-- timestamped iCloud copies: `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Codex/YYYY-MM-DD_HHMMSS_lactase_persistence_spatial_posterior.{gif,mp4}`
 
 ## Project Goals
 
@@ -304,7 +301,7 @@ Test coverage must include:
 - ABC distance calculations
 - visualization helper functions that prepare map layers and animation frames
 
-Tests run locally with `wolframscript -file scripts/run_tests.wls` (27 VerificationTests, small fixtures under `tests/fixtures/`); there is no hosted CI.
+Tests run locally with `wolframscript -file scripts/run_tests.wls` (30 VerificationTests, small fixtures under `tests/fixtures/`); there is no hosted CI.
 
 ## Repository Structure
 

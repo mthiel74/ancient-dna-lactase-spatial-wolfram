@@ -11,16 +11,18 @@ fig = FileNameJoin[{root, "figures", "generated"}];
 
 samples = LoadProcessedSamples[root];
 grid = BuildEuropeGrid[2];
-mcmc = LoadOrRunOriginMCMC[root, samples, grid];
+mcmc = ReloadOriginMCMC[root];
 Export[FileNameJoin[{fig, "origin_mcmc_density.png"}], OriginDensityMap[mcmc], ImageResolution -> 110];
 
-mapOf[files_] := KeyDrop[First[MaximalBy[Flatten[Map[Association,
-  Normal[Import[#, "Dataset", HeaderLines -> 1]]] & /@ files, 1], #["LogPosterior"] &]], "LogPosterior"];
+originSpec = LactasePersistenceSpatial`Private`$OriginPriorSpec;
+mainSpec = LactasePersistenceSpatial`Private`$PriorSpec; mainSpec["Migration"] = originSpec["Migration"];
 originFiles = Join[{FileNameJoin[{proc, "origin_mcmc_chain.csv"}]}, FileNames["origin_mcmc_chain_seed*.csv", proc]];
 mainFiles = FileNames["main_mcmc_chain_seed*.csv", proc];
 domFiles = FileNames["origin_mcmc_dominance_seed*.csv", proc];
-models = <|"spatial standing variation (MAP)" -> mapOf[mainFiles], "spatial point source (MAP)" -> mapOf[originFiles]|>;
-If[domFiles =!= {}, models["spatial point source + dominance h (MAP)"] = mapOf[domFiles]];
+originMap = BestLikelihoodParams[originFiles, originSpec]["Params"];
+models = <|"spatial standing variation" -> BestLikelihoodParams[mainFiles, mainSpec]["Params"],
+  "spatial point source" -> originMap|>;
+If[domFiles =!= {}, models["spatial point source + dominance h"] = BestLikelihoodParams[domFiles, originSpec]["Params"]];
 ladder = DevianceLadder[samples, grid, models];
 LactasePersistenceSpatial`Private`ExportRows[FileNameJoin[{proc, "origin_mcmc_deviance.csv"}], ladder];
 Do[Print[r], {r, ladder}];
@@ -29,5 +31,6 @@ LactasePersistenceSpatial`Private`ExportRows[FileNameJoin[{proc, "origin_mcmc_re
 Export[FileNameJoin[{fig, "likelihood_residual_heatmap.png"}], ResidualHeatmap[resid], ImageResolution -> 110];
 conv = McmcConvergenceTable[originFiles];
 LactasePersistenceSpatial`Private`ExportRows[FileNameJoin[{proc, "origin_mcmc_convergence.csv"}],
-  Map[Append[KeyDrop[#, "ChainMedians"], "ChainMedians" -> StringRiffle[ToString /@ #["ChainMedians"], " | "]] &, conv]];
+  Map[Append[KeyDrop[#, {"ChainMedians", "ChainESS"}], "ChainMedians" -> StringRiffle[ToString /@ #["ChainMedians"], " | "]] &, conv]];
+Print["convergence: worst Rhat ", Max[#["Rhat"] & /@ conv], " min chain ESS ", Min[#["MinChainESS"] & /@ conv]];
 Print["done"];

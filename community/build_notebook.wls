@@ -87,6 +87,9 @@ oLat = oQ["OriginLatitude"]; oLon = oQ["OriginLongitude"]; oT = oQ["OriginTimeBP
 (* v3: exact-likelihood chains (must exist: scripts/run_origin_mcmc.wls,
    run_origin_mcmc_chain.wls 2718/1618, run_main_mcmc.wls 314159/2718) *)
 procDir = FileNameJoin[{repoRoot, "data", "processed"}];
+$OriginSpecSym = LactasePersistenceSpatial`Private`$OriginPriorSpec;
+$MainSpecSym = LactasePersistenceSpatial`Private`$PriorSpec;
+$MainSpecSym["Migration"] = $OriginSpecSym["Migration"];
 lidxCount = LikelihoodIndex[samples, grid]["SampleCount"];
 nTests = StringCount[Import[FileNameJoin[{repoRoot, "tests", "core.wlt"}], "Text"], "VerificationTest["];
 mcmcFilesPre = Join[{FileNameJoin[{procDir, "origin_mcmc_chain.csv"}]},
@@ -96,20 +99,43 @@ If[mainFilesPre === {}, Print["  !! no main_mcmc_chain_seed*.csv - run scripts/r
 mapOfPre[files_] := KeyDrop[First[MaximalBy[Flatten[Map[Association,
   Normal[Import[#, "Dataset", HeaderLines -> 1]]] & /@ files, 1], #["LogPosterior"] &]], "LogPosterior"];
 originMapPre = mapOfPre[mcmcFilesPre]; mainMapPre = mapOfPre[mainFilesPre];
-originMcmcPre = LoadOrRunOriginMCMC[repoRoot, samples, grid];
+originMcmcPre = ReloadOriginMCMC[repoRoot];
 mcmcErr = SelectFirst[PosteriorParameterQuantiles[originMcmcPre], #["Parameter"] === "CallErrorRate" &]["Median"];
 mainChainPre = Flatten[Map[Association, Normal[Import[#, "Dataset", HeaderLines -> 1]]] & /@ mainFilesPre, 1];
 mainErrMed = Median[mainChainPre[[All, "CallErrorRate"]]];
 mainMigMed = Median[mainChainPre[[All, "Migration"]]];
 mainLogP0 = Median[Log10[mainChainPre[[All, "InitialFrequency"]]]];
+(* early carriers actually used by the likelihood (after the snap cutoff) *)
+lidxPre = LikelihoodIndex[samples, grid];
+earlyPre = Flatten[Position[lidxPre["TimesBP"], _?(# > 6000 &)]];
+earlyCalled = Round[Total[lidxPre["Called"][[earlyPre]]]];
+earlyDerived = Round[Total[lidxPre["Derived"][[earlyPre]]]];
+earlyCarriers = Length[Select[earlyPre, lidxPre["Derived"][[#]] > 0 &]];
+droppedCount = lidxPre["DroppedCount"]; droppedCalled = Round[lidxPre["DroppedCalled"]];
+(* best-LIKELIHOOD (not max-posterior) parameters + per-chain spread *)
+originBestPre = BestLikelihoodParams[mcmcFilesPre, $OriginSpecSym];
+originMapPre = originBestPre["Params"];
+originChainSpread = Max[originBestPre["PerChainBest"]] - Min[originBestPre["PerChainBest"]];
+(* pooled point-source posterior: median time + bound-hugging audit *)
+originPooledPre = Flatten[Map[Association, Normal[Import[#, "Dataset", HeaderLines -> 1]]] & /@ mcmcFilesPre, 1];
+originTimeMed = Median[originPooledPre[[All, "OriginTimeBP"]]];
+biMultHug = N[Count[originPooledPre, r_ /; r["SelectionMultiplierBritishIsles"] >= 2.178]/Length[originPooledPre]];
+(* min per-chain Geyer ESS and max split-Rhat, both models *)
+originConvPre = McmcConvergenceTable[mcmcFilesPre];
+originMinESS = Min[#["MinChainESS"] & /@ originConvPre];
+originMaxRhat = Max[#["Rhat"] & /@ originConvPre];
+mainConvPre = McmcConvergenceTable[mainFilesPre];
+mainMaxRhat = Max[#["Rhat"] & /@ mainConvPre];
+mainMinESS = Min[#["MinChainESS"] & /@ mainConvPre];
 residPre = LikelihoodResidualTable[samples, grid, originMapPre];
 residSum[r_] := Total[Select[residPre, #["Region"] === r &][[All, "LLModelMinusLogistic"]]];
 residRDGain = residSum["Rhine-Danube"]; residBIloss = residSum["British Isles"]; residBalticLoss = residSum["Baltic"];
 bi1 = SelectFirst[residPre, #["Region"] === "British Isles" && #["MillenniumBP"] === 1 &];
 residBIobs = bi1["ObservedFreq"]; residBImodel = bi1["ModelFreq"];
 domFilesPre = FileNames["origin_mcmc_dominance_seed*.csv", procDir];
+mainMapPre = BestLikelihoodParams[mainFilesPre, $MainSpecSym]["Params"];
 ladderModelsPre = <|"standing" -> mainMapPre, "origin" -> originMapPre|>;
-If[domFilesPre =!= {}, ladderModelsPre["dominance"] = mapOfPre[domFilesPre]];
+If[domFilesPre =!= {}, ladderModelsPre["dominance"] = BestLikelihoodParams[domFilesPre, $OriginSpecSym]["Params"]];
 ladderPre = DevianceLadder[samples, grid, ladderModelsPre];
 llOf[m_] := SelectFirst[ladderPre, #["Model"] === m &]["LogLikelihood"];
 llStanding = llOf["standing"]; llOrigin = llOf["origin"];
@@ -119,7 +145,8 @@ domSentence = If[domFilesPre === {}, "",
     If[d > llOrigin + 5,
       ": it improves the point-source log-likelihood by " <> fmt[d - llOrigin, 0] <> " nats, which is real but does not close the " <> fmt[llStanding - d, 0] <> "-nat gap to standing variation",
       With[{m = ladderModelsPre["dominance"]},
-        ": at a log-likelihood of " <> fmt[d, 1] <> " it does not rescue the point-source model, even though the data take the offered dominance (h \[TildeTilde] " <> fmt[m["Dominance"], 2] <> ", the biology's answer) \[LongDash] and it moves the origin to " <> fmt[m["OriginLatitude"], 1] <> "\[Degree]N, " <> fmt[m["OriginLongitude"], 1] <> "\[Degree]E at " <> ToString[Round[m["OriginTimeBP"]]] <> " BP. A location that jumps 500 km when the selection recursion changes is a property of the model, not of the allele"]]]];
+        With[{dkm = Round[QuantityMagnitude[GeoDistance[{m["OriginLatitude"], m["OriginLongitude"]}, {originMapPre["OriginLatitude"], originMapPre["OriginLongitude"]}], "Kilometers"], 10]},
+        ": at a log-likelihood of " <> fmt[d, 1] <> " it does not rescue the point-source model; this single, poorly-mixed chain lands at dominance h \[TildeTilde] " <> fmt[m["Dominance"], 2] <> " (the biology expects near-dominance, h close to 1, and the plateau it buys does not close the gap) \[LongDash] and it moves the best-fit origin to " <> fmt[m["OriginLatitude"], 1] <> "\[Degree]N, " <> fmt[m["OriginLongitude"], 1] <> "\[Degree]E, about " <> ToString[dkm] <> " km from the point-source estimate. A location that moves that far when the selection recursion changes is a property of the model, not of the allele"]]]]];
 Print["  exact-likelihood ladder: logistic ", fmt[llLogistic, 1], " origin ", fmt[llOrigin, 1], " standing ", fmt[llStanding, 1]];
 
 nSamples = Length[samples];
@@ -307,10 +334,11 @@ writeAll[{
 
 title["Watching evolution happen: lactase persistence in 8,000 years of ancient DNA"],
 
-subtitle["A sequential Monte Carlo ABC walkthrough: from raw ancient \
-genotypes to a spatial diffusion\[Dash]selection model, with the \
-uncertainty carried all the way into the pictures \[LongDash] including \
-the honest finding that these data do not locate the allele's origin"],
+subtitle["From raw ancient genotypes to a spatial diffusion\[Dash]selection \
+model \[LongDash] fitted first by sequential Monte Carlo ABC, then by the \
+exact per-sample likelihood \[LongDash] with the uncertainty carried into \
+every picture, including the honest finding that these data do not locate \
+the allele's origin"],
 
 animCell[FileNameJoin[{figDir, "hero_lactase_persistence.gif"}],
   "Posterior mean frequency of the lactase-persistence allele (rs4988235-A) \
@@ -1095,9 +1123,13 @@ list."],
 
 para[{"It is worth being precise about ", ital["why"], " location fails \
 while timing succeeds, because the reason is in the data rather than the \
-code. Of the 636 called alleles older than 6,000 BP in this dataset, ",
-bold["exactly one"], " is derived \[LongDash] a single heterozygote from \
-Bulgaria at about 6,560 BP. Timing is identified because the whole \
+code. Of the " <> ToString[earlyCalled] <> " called alleles older than \
+6,000 BP that the model uses, " <> ToString[earlyDerived] <> " are derived, \
+across " <> ToString[earlyCarriers] <> " individuals: single-read calls from \
+Varna (~6,570 BP), Gurgy (~6,400 BP) and Doggerland (~8,810 BP), and one \
+derived homozygote from \[CapitalCHacek]atalh\[ODoubleAcute]y\[UDoubleAcute]k \
+(~8,500 BP). Three of the four are single reads that carry no zygosity \
+information at all. Timing is identified because the whole \
 European frequency curve turns upward at a well-determined moment, and \
 thousands of alleles constrain that turn. Location has essentially one \
 informative carrier plus a field of zeros, and a zero is only weak \
@@ -1147,14 +1179,21 @@ mono["scripts/run_origin_mcmc_chain.wls"], ". Same origin model, same \
 constrained prior as \[Section]10 \[LongDash] only the information \
 extracted from the data changes:"}],
 
-evalIn["originMcmc = LoadOrRunOriginMCMC[Directory[], samples, grid];\nmcmcQuant = PosteriorParameterQuantiles[originMcmc];\nmqOf[p_] := SelectFirst[mcmcQuant, #[\"Parameter\"] === p &];\ncell[q_, d_] := Row[{NumberForm[q[\"Median\"], {6, d}], \"  [\", NumberForm[q[\"Lower95\"], {6, d}], \", \", NumberForm[q[\"Upper95\"], {6, d}], \"]\"}];\nGrid[Prepend[\n  Table[With[{p = pd[[1]], d = pd[[2]]}, With[{a = SelectFirst[originQuant, #[\"Parameter\"] === p &], m = mqOf[p], cp = cpOf[p]},\n    {p, cell[cp, d], cell[a, d], cell[m, d],\n     NumberForm[(m[\"Upper95\"] - m[\"Lower95\"])/(a[\"Upper95\"] - a[\"Lower95\"]), {3, 2}]}]],\n   {pd, {{\"OriginLatitude\", 1}, {\"OriginLongitude\", 1}, {\"OriginTimeBP\", 0},\n     {\"Log10InjectFrequency\", 2}, {\"Migration\", 3}, {\"SelectionDairying\", 3},\n     {\"DairyingLeadYears\", 0}, {\"CallErrorRate\", 4}}}],\n  Style[#, Bold] & /@ {\"parameter\", \"constrained prior\", \"ABC posterior (\[Section]10)\", \"exact-likelihood posterior\", \"width ratio\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+evalIn["originMcmc = ReloadOriginMCMC[Directory[]];\nmcmcQuant = PosteriorParameterQuantiles[originMcmc];\nmqOf[p_] := SelectFirst[mcmcQuant, #[\"Parameter\"] === p &];\ncell[q_, d_] := Row[{NumberForm[q[\"Median\"], {6, d}], \"  [\", NumberForm[q[\"Lower95\"], {6, d}], \", \", NumberForm[q[\"Upper95\"], {6, d}], \"]\"}];\nGrid[Prepend[\n  Table[With[{p = pd[[1]], d = pd[[2]]}, With[{a = SelectFirst[originQuant, #[\"Parameter\"] === p &], m = mqOf[p], cp = cpOf[p]},\n    {p, cell[cp, d], cell[a, d], cell[m, d],\n     NumberForm[(m[\"Upper95\"] - m[\"Lower95\"])/(a[\"Upper95\"] - a[\"Lower95\"]), {3, 2}]}]],\n   {pd, {{\"OriginLatitude\", 1}, {\"OriginLongitude\", 1}, {\"OriginTimeBP\", 0},\n     {\"Log10InjectFrequency\", 2}, {\"Migration\", 3}, {\"SelectionDairying\", 3},\n     {\"DairyingLeadYears\", 0}, {\"CallErrorRate\", 4}}}],\n  Style[#, Bold] & /@ {\"parameter\", \"constrained prior\", \"ABC posterior (\[Section]10)\", \"exact-likelihood posterior\", \"width ratio\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
 
 captionCell["Median and 95% interval under the constrained prior, the ABC \
 posterior of \[Section]10, and the exact-likelihood posterior (main chain), \
 with the ratio of the last two interval widths. The exact likelihood \
-shrinks every interval by an order of magnitude \[LongDash] and pushes \
-Migration, DairyingLeadYears and OriginTimeBP onto their prior bounds, \
-which is the first warning sign, discussed below."],
+shrinks every interval by an order of magnitude. It also pins one \
+parameter against a bound: " <> ToString[Round[100 biMultHug]] <> "% of the \
+pooled draws put the British-Isles selection multiplier within 1% of its \
+ceiling of 2.2 (OriginTimeBP, by contrast, sits at about " <> \
+ToString[Round[originTimeMed]] <> " BP, well inside its 10,000 BP bound). A \
+parameter pinned to a bound is the model saying it cannot do something the \
+data demand \[LongDash] here, make Britain rise fast enough \[LongDash] and \
+it is the first warning sign, discussed below. And these are one chain's \
+intervals; the convergence table below shows why that is not yet \
+trustworthy."],
 
 evalIn["OriginDensityMap[originMcmc]"],
 
@@ -1165,19 +1204,23 @@ the next two tables say why."],
 
 
 para[{"First, ", bold["did the chains converge?"], " Three chains, three \
-seeds, split-", ital["R"], "-hat (Gelman et al. 2013) per parameter and \
-the pooled autocorrelation effective sample size. Values of ", ital["R"],
-"-hat near 1 mean the chains agree; anything above ~1.1 means they are \
-exploring different parts of the posterior:"}],
+seeds, split-", ital["R"], "-hat (Gelman et al. 2013) per parameter and the \
+per-chain effective sample size (Geyer's initial-positive-sequence \
+estimator). ", ital["R"], "-hat near 1 means the chains agree; the modern \
+threshold is 1.01, and by that standard \[LongDash] and by the target of a \
+few hundred effective draws per chain \[LongDash] this run does not pass:"}],
 
-evalIn["mcmcFiles = Join[{FileNameJoin[{Directory[], \"data\", \"processed\", \"origin_mcmc_chain.csv\"}]},\n  FileNames[\"origin_mcmc_chain_seed*.csv\", FileNameJoin[{Directory[], \"data\", \"processed\"}]]];\nconv = McmcConvergenceTable[mcmcFiles];\nGrid[Prepend[\n  Map[{#[\"Parameter\"], NumberForm[#[\"Rhat\"], {4, 2}], NumberForm[#[\"PooledESS\"], {4, 0}],\n     Row[NumberForm[#, {6, 3}] & /@ #[\"ChainMedians\"], \"  |  \"]} &,\n   Select[conv, MemberQ[{\"OriginLatitude\", \"OriginLongitude\", \"OriginTimeBP\", \"Migration\",\n     \"SelectionDairying\", \"SelectionMultiplierBritishIsles\", \"DairyingLeadYears\", \"CallErrorRate\"}, #[\"Parameter\"]] &]],\n  Style[#, Bold] & /@ {\"parameter\", \"split-R-hat\", \"pooled ESS\", \"chain medians\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+evalIn["mcmcFiles = Join[{FileNameJoin[{Directory[], \"data\", \"processed\", \"origin_mcmc_chain.csv\"}]},\n  FileNames[\"origin_mcmc_chain_seed*.csv\", FileNameJoin[{Directory[], \"data\", \"processed\"}]]];\nconv = McmcConvergenceTable[mcmcFiles];\nGrid[Prepend[\n  Map[{#[\"Parameter\"], NumberForm[#[\"Rhat\"], {4, 2}], NumberForm[#[\"MinChainESS\"], {4, 1}],\n     Row[NumberForm[#, {6, 3}] & /@ #[\"ChainMedians\"], \"  |  \"]} &,\n   Select[conv, MemberQ[{\"OriginLatitude\", \"OriginLongitude\", \"OriginTimeBP\", \"Migration\",\n     \"SelectionDairying\", \"SelectionMultiplierBritishIsles\", \"DairyingLeadYears\", \"CallErrorRate\"}, #[\"Parameter\"]] &]],\n  Style[#, Bold] & /@ {\"parameter\", \"split-R-hat\", \"min chain ESS\", \"chain medians\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6},\n Background -> {None, {GrayLevel[0.93], None}}]"],
 
 captionCell["Convergence diagnostics across the three chains. Location \
-agrees to within a few degrees (all three sit between 44\[Dash]48\[Degree]N, \
-9\[Dash]11\[Degree]E) but the selection multipliers do not, and \
-R-hat values of 2\[Dash]7 mean the chains found different ridges of a \
-posterior that is far from Gaussian. The location claim is robust across \
-chains; the credible intervals of any single chain are not."],
+agrees across chains (all three medians sit within a few degrees) but the \
+selection multipliers do not: the worst split-R-hat is about " <> \
+fmt[originMaxRhat, 1] <> " and the effective sample size bottoms out near " <> \
+ToString[Round[originMinESS]] <> " per chain, so the posterior is far from \
+Gaussian and nowhere near enough samples. Read the map as a location that is \
+robust across chains; do ", ital["not"], " read the single-chain 95% \
+intervals in the table above as calibrated. A properly mixed sampler \
+(differential-evolution or tempered) is on the list in \[Section]14."],
 
 para[{"Second, and more important: ", bold["is the model any good?"], " \
 With an exact likelihood one can finally ask the question ABC cannot. The \
@@ -1185,20 +1228,28 @@ ladder below puts several models on the same ", ToString[lidxCount], " \
 samples: a constant frequency; five independent logistic curves in time, \
 one per region, with no space at all; the spatial standing-variation model \
 of \[Section]4 (allele present everywhere at 10,000 BP with a smooth \
-gradient) at its maximum-a-posteriori point from its own exact-likelihood \
-chains; the point-source model at its MAP; and the saturated model with one \
+gradient) at the best-fitting point its own exact-likelihood chains \
+reached; the point-source model likewise; and the saturated model with one \
 free frequency per occupied time\[Times]cell bin, the ceiling any model can \
-reach. The last column is the fraction of the constant-to-saturated \
-deviance each model explains:"}],
+reach. The last column is how many nats above the constant-frequency model \
+each one buys \[LongDash] more is better, and the saturated value is the \
+most any model on these data could reach:"}],
 
-evalIn["mainFiles = FileNames[\"main_mcmc_chain_seed*.csv\", FileNameJoin[{Directory[], \"data\", \"processed\"}]];\nmapOf[files_] := KeyDrop[First[MaximalBy[Flatten[Map[Association, Normal[Import[#, \"Dataset\", HeaderLines -> 1]]] & /@ files, 1], #[\"LogPosterior\"] &]], \"LogPosterior\"];\noriginMap = mapOf[mcmcFiles]; mainMap = mapOf[mainFiles];\ndomFiles = FileNames[\"origin_mcmc_dominance_seed*.csv\", FileNameJoin[{Directory[], \"data\", \"processed\"}]];\nmodels = <|\"spatial standing variation (MAP)\" -> mainMap, \"spatial point source (MAP)\" -> originMap|>;\nIf[domFiles =!= {}, models[\"spatial point source + dominance h (MAP)\"] = mapOf[domFiles]];\nladder = DevianceLadder[samples, grid, models];\nGrid[Prepend[\n  Map[{#[\"Model\"], #[\"FreeParameters\"], NumberForm[#[\"LogLikelihood\"], {8, 1}], NumberForm[#[\"DevianceExplained\"], {4, 3}]} &, ladder],\n  Style[#, Bold] & /@ {\"model\", \"free parameters\", \"log-likelihood\", \"deviance explained\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6}, Alignment -> {{Left, Right, Right, Right}},\n Background -> {None, {GrayLevel[0.93], None}}]"],
+evalIn["$OriginSpec = LactasePersistenceSpatial`Private`$OriginPriorSpec;\n$MainSpec = LactasePersistenceSpatial`Private`$PriorSpec; $MainSpec[\"Migration\"] = $OriginSpec[\"Migration\"];\nmainFiles = FileNames[\"main_mcmc_chain_seed*.csv\", FileNameJoin[{Directory[], \"data\", \"processed\"}]];\nmapOf[files_] := BestLikelihoodParams[files, If[StringContainsQ[First[files], \"main_\"], $MainSpec, $OriginSpec]][\"Params\"];\noriginMap = mapOf[mcmcFiles]; mainMap = mapOf[mainFiles];\ndomFiles = FileNames[\"origin_mcmc_dominance_seed*.csv\", FileNameJoin[{Directory[], \"data\", \"processed\"}]];\nmodels = <|\"spatial standing variation\" -> mainMap, \"spatial point source\" -> originMap|>;\nIf[domFiles =!= {}, models[\"spatial point source + dominance h\"] = mapOf[domFiles]];\nladder = DevianceLadder[samples, grid, models];\nconstLL = SelectFirst[ladder, StringStartsQ[#[\"Model\"], \"constant\"] &][\"LogLikelihood\"];\nGrid[Prepend[\n  Map[{#[\"Model\"], #[\"LikelihoodParameters\"], NumberForm[#[\"LogLikelihood\"], {8, 1}], NumberForm[#[\"LogLikelihood\"] - constLL, {8, 1}]} &, ladder],\n  Style[#, Bold] & /@ {\"model\", \"likelihood parameters\", \"log-likelihood\", \"nats over constant\"}],\n Frame -> All, FrameStyle -> GrayLevel[0.8], Spacings -> {1.2, 0.6}, Alignment -> {{Left, Right, Right, Right}},\n Background -> {None, {GrayLevel[0.93], None}}]"],
 
-captionCell["The deviance ladder. Read the middle rows against each \
-other: the point-source model, with the most parameters of the three, fits \
-worse than five unrelated logistic curves; the standing-variation model \
-beats both. A single origin plus a diffusion wave is not merely \
+captionCell["The deviance ladder. Each spatial row is the best likelihood \
+any of its chains reached, so it is a ", ital["lower bound"], " on that \
+model's true maximum \[LongDash] the point-source chains span about " <> \
+ToString[Round[originChainSpread]] <> " nats among themselves, a direct \
+measure of how far from the optimum they are; the standing-variation gap \
+below is wide enough to survive that slack. Read the middle rows against \
+each other: the point-source model, with more likelihood parameters, still \
+fits worse than five unrelated logistic curves, and the standing-variation \
+model beats both. A single origin plus a diffusion wave is not merely \
 unidentified by these data \[LongDash] it is a worse description of them \
-than assuming the allele was already everywhere."],
+than assuming the allele was already everywhere. (Columns count only \
+parameters that enter the likelihood; DairyingLeadYears, which acts only \
+through the support constraint, is excluded.)"],
 
 
 para[{"Third, ", bold["where"], " does the point-source model lose? \
@@ -1218,16 +1269,18 @@ ToString[Round[-residBalticLoss]] <> " in the Baltic, almost all of it in the \
 
 para[{"The British-Isles loss is instructive because the aggregate \
 frequency there is nearly right (" <> fmt[residBIobs, 2] <> " observed \
-against " <> fmt[residBImodel, 2] <> " predicted for 1\[Dash]2 kyr BP). \
-The damage is ", ital["within"], " the region: a wave arriving from the \
-continent must put a south-east-to-north-west gradient across Britain, and \
-the samples say the opposite \[LongDash] the periphery is already high. A \
-single continental source with constant selection cannot make a peripheral \
-maximum; something local (stronger selection, a second source, or \
+against " <> fmt[residBImodel, 2] <> " predicted for 1\[Dash]2 kyr BP), so \
+the model is not simply too low on average. The damage is ", ital["within"], \
+" the region and it is concentrated: a handful of derived alleles land in \
+cells the deterministic front has left near the error floor, and each one \
+there costs several nats. A single continental wave with constant selection \
+sharpens into a near-step front, so it cannot simultaneously be high in the \
+south-east and high on the Atlantic and Baltic margins where early risers \
+also appear; something local (stronger selection, a second source, or \
 demography the model does not carry) is needed, and the British-Isles \
-selection multiplier sitting on its prior ceiling of 2.2 is the model \
-straining to say so. The same reading explains the parameters on their \
-bounds: Migration at 0.3 means the per-step mixing fraction \
+selection multiplier sitting on its ceiling of 2.2 is the model straining to \
+say so. The parameters on their bounds tell the same story: Migration at 0.3 \
+means the per-step mixing fraction \
 \[Alpha] = 1 \[Minus] exp(\[Minus]8.9 m) is already 0.93 \[LongDash] the \
 wave is as fast as the lattice allows \[LongDash] and the data still want \
 it faster, i.e. they want the allele to appear nearly simultaneously \
@@ -1253,6 +1306,17 @@ own. The package now carries that recursion (", mono["DominanceGrowth"],
 "), switched on by a \"Dominance\" parameter, and a 20,000-iteration \
 chain with h free (", mono["scripts/run_origin_mcmc_dominance.wls"], 
 ") is the extra row in the ladder above" <> domSentence <> "."}],
+
+para[{"One caution applies to the winner too. The standing-variation \
+model wins the ladder, but its own two chains are no better mixed than the \
+point-source ones (worst split-R-hat about " <> fmt[mainMaxRhat, 1] <> \
+", minimum effective size about " <> ToString[Round[mainMinESS]] <> " per \
+chain), so the numbers quoted from it \[LongDash] the near-uniform starting \
+frequency, the slow mixing \[LongDash] are the shape of its posterior, not \
+tightly estimated values. What is robust is the ", ital["ranking"], ": the \
+ladder gaps are tens of nats, far larger than the few-nat slack the chains \
+leave, so which model fits better is not in question even though neither \
+model's parameters are pinned down."}],
 
 para[{bold["What survives."], " The exact likelihood does not overturn \
 \[Section]10 and \[Section]11 \[LongDash] it sharpens them into a \
