@@ -217,8 +217,9 @@ wlIn[code_String] := Cell[code, "Input"];
 (* Every evalIn cell is EVALUATED here, in this wolframscript kernel, in
    notebook order; the genuine typeset result is embedded as its Output
    cell with matching In[n]:=/Out[n]= labels. Graphics are rasterized;
-   tables and Manipulates keep live boxes (Manipulates carry their data,
-   so they work in any downloaded copy). *)
+   tables keep live boxes; Manipulates are embedded as a static snapshot
+   (their precomputed data is heavy) with the live call left in the In[]
+   cell so a downloaded copy can be re-evaluated. *)
 
 $cellCounter = 0;
 
@@ -234,8 +235,17 @@ evalIn[code_String] := Module[{res, n, inCell, outCell},
   If[res === Null, Return[inCell]];
   outCell = Which[
     MatchQ[res, _Manipulate],
-      Cell[BoxData[ToBoxes[res]], "Output",
-        CellLabel -> "Out[" <> ToString[n] <> "]="],
+      (* embed a static snapshot rather than the live Manipulate (whose
+         precomputed data is heavy): the In[] cell above still holds the
+         call, so evaluating it in a downloaded copy gives the live control *)
+      Cell[BoxData[ToBoxes[
+        Labeled[Rasterize[res, "Image", ImageResolution -> 100],
+          Style[
+            "Static snapshot \[LongDash] evaluate this cell in a downloaded \
+copy of the notebook to explore it interactively.",
+            Italic, 10, FontFamily -> "Helvetica", GrayLevel[0.45]], Bottom]]],
+        "Output", CellLabel -> "Out[" <> ToString[n] <> "]=",
+        TextAlignment -> Center],
     graphicalQ[res],
       Cell[BoxData[ToBoxes[Rasterize[res, "Image", ImageResolution -> 110]]],
         "Output", CellLabel -> "Out[" <> ToString[n] <> "]=",
@@ -268,7 +278,7 @@ genImgCell[file_String, width_: 560] := imgFileCell[FileNameJoin[{genDir, file}]
 (* executed-animation cell: shows the generating call as a labelled In[]
    cell, RUNS it at build time, and embeds the resulting animation as its
    Out[] \[LongDash] so the notebook itself produces every moving picture *)
-evalAnim[code_String, gifPath_String, caption_] := Module[{n, all, anim, boxes, inCell, outCell},
+evalAnim[code_String, gifPath_String, caption_, w_: 560, stride_: 2] := Module[{n, all, anim, boxes, inCell, outCell},
   $cellCounter++; n = $cellCounter;
   Print["  evalAnim In[", n, "]: ", StringTake[code, UpTo[70]]];
   ToExpression[code];
@@ -276,7 +286,7 @@ evalAnim[code_String, gifPath_String, caption_] := Module[{n, all, anim, boxes, 
     Return @ Cell[TextData[{bold["[ animation not produced: " <> gifPath <> " ]"]}], "Text",
       FontColor -> RGBColor[0.7, 0.1, 0.1]]];
   all = Import[gifPath, {"GIF", "ImageList"}];
-  all = ColorQuantize[ImageResize[#, {560}], 256] & /@ all[[1 ;; ;; 2]];
+  all = ColorQuantize[ImageResize[#, {w}], 256] & /@ all[[1 ;; ;; stride]];
   anim = AnimatedImage[all, FrameRate -> 2.5,
     AnimationRunning -> True, AnimationRepetitions -> Infinity];
   boxes = ToBoxes[
@@ -291,13 +301,13 @@ evalAnim[code_String, gifPath_String, caption_] := Module[{n, all, anim, boxes, 
   Cell[CellGroupData[{inCell, outCell}, Open]]
 ];
 
-animCell[path_String, caption_] := Module[{all, anim, boxes},
+animCell[path_String, caption_, w_: 560, stride_: 2] := Module[{all, anim, boxes},
   If[!FileExistsQ[path],
     Return @ Cell[TextData[{bold["[ missing animation: " <> path <> " ]"]}], "Text",
       FontColor -> RGBColor[0.7, 0.1, 0.1]]];
   all = Import[path, {"GIF", "ImageList"}];
-  all = all[[1 ;; ;; 2]];
-  all = ColorQuantize[ImageResize[#, {560}], 256] & /@ all;
+  all = all[[1 ;; ;; stride]];
+  all = ColorQuantize[ImageResize[#, {w}], 256] & /@ all;
   anim = AnimatedImage[all, FrameRate -> 2.5,
     AnimationRunning -> True, AnimationRepetitions -> Infinity];
   boxes = ToBoxes[
